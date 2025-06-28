@@ -8,6 +8,7 @@ export const ActionIcon = ({
   className,
   variant = 'ghost',
   onClick,
+  showTooltip = true,
 }: {
   icon: React.ReactNode
   tooltipText: string
@@ -15,6 +16,7 @@ export const ActionIcon = ({
   className?: string
   variant?: 'ghost' | 'default' | 'outline' | 'secondary' | 'destructive' | null | undefined
   onClick?: () => void
+  showTooltip?: boolean
 }) => (
   <TooltipProvider delayDuration={0}>
     <Tooltip>
@@ -23,9 +25,11 @@ export const ActionIcon = ({
           {icon}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side={tooltipSide}>
-        <p>{tooltipText}</p>
-      </TooltipContent>
+      {showTooltip && (
+        <TooltipContent side={tooltipSide}>
+          <p>{tooltipText}</p>
+        </TooltipContent>
+      )}
     </Tooltip>
   </TooltipProvider>
 )

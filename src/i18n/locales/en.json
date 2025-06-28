@@ -206,7 +206,8 @@
     "deleteSuccess": "Deleted successfully",
     "copySuccess": "Copied successfully",
     "copyFailed": "Failed to copy: {{message}}",
-    "failedToRespondReason": "Failed to respond. Please try again. Error message: {{message}}"
+    "failedToRespondReason": "Failed to respond. Please try again. Error message: {{message}}",
+    "thinkingProcess": "Thinking Process: "
   },
   "logo": {
     "name": "Klee",

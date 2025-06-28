@@ -206,7 +206,8 @@
     "deleteSuccess": "删除成功",
     "copySuccess": "复制成功",
     "copyFailed": "复制失败: {{message}}",
-    "failedToRespondReason": "未能响应，请重试。错误信息：{{message}}"
+    "failedToRespondReason": "未能响应，请重试。错误信息：{{message}}",
+    "thinkingProcess": "思考过程: "
   },
   "logo": {
     "name": "Klee",

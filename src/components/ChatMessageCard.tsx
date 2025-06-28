@@ -15,12 +15,15 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { EnumRouterLink } from '@/constants/paths'
 import { useTranslation } from 'react-i18next'
 import { useCreateConversation } from '@/hooks/use-conversation'
+import { useMemo } from 'react'
+import CodeDisplayBlock from './CodeDisplayBlock'
 
 // Add Think component
 const Think = ({ children }: { children: React.ReactNode }) => {
+  const { t } = useTranslation()
   return (
     <div className="my-4 rounded-lg bg-muted/50 p-4 text-sm text-muted-foreground">
-      <div className="mb-2 font-medium">Thinking Process:</div>
+      <div className="mb-2 font-medium">{t('chat.thinkingProcess')}</div>
       {children}
     </div>
   )
@@ -79,6 +82,19 @@ export default function ChatMessageCard({
     toast.success(t('chat.deleteSuccess'))
   }
 
+  const { thinkContent, cleanContent } = useMemo(() => {
+    const getThinkContent = (content: string) => {
+      const match = content.match(/<think>([\s\S]*?)(?:<\/think>|$)/)
+      return match ? match[1].trim() : null
+    }
+
+    return {
+      thinkContent: getThinkContent(data.content),
+      cleanContent: data.content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim(),
+    }
+  }, [data.id, data.status, data.content])
+  const contentParts = useMemo(() => cleanContent.split('```'), [cleanContent])
+
   const handleAddToNotes = async () => {
     const title = userMessage?.content || 'Question'
     const newNote = await createNote({
@@ -107,7 +123,6 @@ export default function ChatMessageCard({
     )
     queryClient.invalidateQueries({ queryKey: ['conversationsByNoteId', noteId] })
   }
-
   return (
     <div key={data.id} className="my-2 flex flex-col gap-4 pt-2">
       <div className="flex items-center gap-2 overflow-hidden text-foreground">
@@ -115,19 +130,22 @@ export default function ChatMessageCard({
         <span className="text-lg font-medium">{t('chat.answer')}</span>
       </div>
       <div className={cn('prose overflow-hidden break-words')}>
-        {data.content ? (
-          <ReactMarkdown
-            components={
-              {
-                think: Think,
-              } as Partial<CustomComponents>
+        {thinkContent && <Think>{thinkContent}</Think>}
+        {contentParts.length &&
+          contentParts.map((part, index) => {
+            if (index % 2 === 0) {
+              return <ReactMarkdown key={index}>{part}</ReactMarkdown>
+            } else {
+              return (
+                <pre
+                  className="m-0 whitespace-pre-wrap rounded-none border-none bg-transparent p-0 shadow-none"
+                  key={index}
+                >
+                  <CodeDisplayBlock code={part} />
+                </pre>
+              )
             }
-          >
-            {data.content}
-          </ReactMarkdown>
-        ) : (
-          ''
-        )}
+          })}
       </div>
       {data.status === 'error' && (
         <div className="flex items-center text-destructive">
@@ -140,7 +158,6 @@ export default function ChatMessageCard({
           {/* <span>{t(`error.free_message_count_exceeded`)}</span> */}
         </div>
       )}
-
       <div
         className={cn(
           'flex justify-between border-b pb-2 text-muted-foreground transition-opacity',
