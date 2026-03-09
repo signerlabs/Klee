@@ -1,0 +1,41 @@
+{
+  "name": "klee-monorepo",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "client:dev": "npm run dev --workspace=client",
+    "build:mac": "bash ./scripts/build-macos.sh",
+    "build:mac:skip-notarize": "SKIP_NOTARIZATION=true bash ./scripts/build-macos.sh",
+    "notarize": "bash ./scripts/notarize-dmg.sh",
+    "publish:github": "cd client && electron-builder --mac --publish always",
+    "server:dev": "npm run dev --workspace=server",
+    "server:build": "npm run build --workspace=server",
+    "server:deploy": "npm run server:build && cd server && eb deploy",
+    "server:deploy:setenv": "cd server && eb setenv $(cat .env | grep -v '^#' | grep -v '^$' | xargs)",
+    "server:status": "cd server && eb status",
+    "server:logs": "cd server && eb logs",
+    "start": "npm run start --workspace=server",
+    "db:up": "docker compose up -d",
+    "db:generate": "cd server && npm run db:generate",
+    "db:migrate": "cd server && npm run db:migrate",
+    "db:push": "cd server && npm run db:push"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "concurrently": "^9.2.1",
+    "node-abi": "^4.14.0",
+    "open-cli": "^8.0.0"
+  },
+  "dependencies": {
+    "@tiptap/suggestion": "^3.7.2",
+    "p-queue": "^9.0.0",
+    "tippy.js": "^6.3.7",
+    "use-debounce": "^10.0.6"
+  }
+}

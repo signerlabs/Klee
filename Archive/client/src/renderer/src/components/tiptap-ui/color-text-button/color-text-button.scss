@@ -1,0 +1,52 @@
+.tiptap-button-color-text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0 -0.175rem;
+  border-radius: var(--tt-radius-xl);
+  transition: transform 0.2s ease;
+
+  &::after {
+    content: "";
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    left: 0;
+    top: 0;
+    border-radius: inherit;
+    box-sizing: border-box;
+    border: 1px solid var(--color-text-button-color);
+    filter: brightness(150%);
+    mix-blend-mode: multiply;
+    opacity: 0.5;
+
+    .dark & {
+      filter: brightness(140%);
+      mix-blend-mode: lighten;
+    }
+  }
+}
+
+.tiptap-button {
+  &[data-active-state="on"] {
+    .tiptap-button-color-text {
+      &::after {
+        filter: brightness(80%);
+      }
+    }
+  }
+
+  .dark & {
+    &[data-active-state="on"] {
+      .tiptap-button-color-text {
+        &::after {
+          // Andere Eigenschaft für .dark Kontext
+          filter: brightness(180%);
+        }
+      }
+    }
+  }
+}

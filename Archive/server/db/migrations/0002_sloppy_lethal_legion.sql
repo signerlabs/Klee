@@ -1,0 +1,1 @@
+ALTER TABLE "knowledge_bases" ADD COLUMN "starred" boolean DEFAULT false NOT NULL;

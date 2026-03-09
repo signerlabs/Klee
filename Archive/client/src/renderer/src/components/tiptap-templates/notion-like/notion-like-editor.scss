@@ -1,0 +1,156 @@
+/**
+ * Notion-like Editor Styles
+ * Fully integrated with shadcn/ui design system
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+/* Editor-specific variables */
+body {
+  --tt-toolbar-height: 44px;
+}
+
+/* Editor font family */
+.tiptap.ProseMirror {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1rem;
+  line-height: 1.75;
+  color: oklch(var(--foreground));
+}
+
+/* Editor wrapper */
+.notion-like-editor-wrapper {
+  background-color: oklch(var(--background));
+  color: oklch(var(--foreground));
+}
+
+@media screen and (max-width: 480px) {
+  .notion-like-editor-wrapper {
+    width: 100vw;
+    height: 100vh;
+    overflow: auto;
+  }
+}
+
+/* Editor content container */
+.notion-like-editor-content {
+  max-width: 768px;
+  width: 100%;
+  margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.notion-like-editor-content .tiptap.ProseMirror.notion-like-editor {
+  flex: 1;
+  padding: 3rem 3rem 30vh;
+
+  /* Typography improvements */
+  line-height: 1.75;
+
+  /* Ensure proper spacing */
+  > * + * {
+    margin-top: 0.75rem;
+  }
+
+  /* Headings should have more space above */
+  > h1,
+  > h2,
+  > h3,
+  > h4 {
+    margin-top: 2rem;
+
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .notion-like-editor-content .tiptap.ProseMirror.notion-like-editor {
+    padding: 1.5rem 1.5rem 30vh;
+  }
+}
+
+/* Scrollbar styling - aligned with shadcn */
+.notion-like-editor-wrapper,
+.notion-like-editor-content {
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: oklch(var(--muted-foreground) / 0.3);
+    border-radius: 10px;
+    background-clip: padding-box;
+    border: 1px solid transparent;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: oklch(var(--muted-foreground) / 0.5);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+
+  scrollbar-width: thin;
+  scrollbar-color: oklch(var(--muted-foreground) / 0.3) transparent;
+}
+
+/* Loading spinner */
+.spinner-container {
+  width: 100%;
+  height: 100%;
+  flex-grow: 1;
+  flex-shrink: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: oklch(var(--muted-foreground));
+
+  .spinner-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+
+    svg {
+      animation: spin 1s linear infinite;
+      height: 1.25rem;
+      width: 1.25rem;
+
+      circle {
+        opacity: 0.25;
+        stroke: currentColor;
+        stroke-width: 4;
+      }
+
+      path {
+        opacity: 0.75;
+        fill: currentColor;
+      }
+    }
+
+    .spinner-loading-text {
+      text-align: center;
+      font-size: 0.875rem;
+      color: oklch(var(--muted-foreground));
+    }
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

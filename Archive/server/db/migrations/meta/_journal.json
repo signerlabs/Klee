@@ -1,0 +1,76 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1760161349375,
+      "tag": "0000_chunky_toad",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1760332271147,
+      "tag": "0001_salty_sersi",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1760336483972,
+      "tag": "0002_sloppy_lethal_legion",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1760426108840,
+      "tag": "0003_lively_kate_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1760514208149,
+      "tag": "0004_bored_sauron",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1760599111904,
+      "tag": "0005_small_miss_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1760601197393,
+      "tag": "0006_sturdy_jubilee",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1760666377102,
+      "tag": "0007_round_cassandra_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1760855675697,
+      "tag": "0008_bitter_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1761805702558,
+      "tag": "0009_old_captain_universe",
+      "breakpoints": true
+    }
+  ]
+}

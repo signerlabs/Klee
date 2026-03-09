@@ -1,0 +1,183 @@
+/* TipTap Notion-like Editor Styles */
+@import './styles/_variables.scss';
+@import './styles/_keyframe-animations.scss';
+/* shadcn/ui Bridge - MUST come after TipTap variables to override them */
+@import './styles/_tiptap-shadcn-bridge.scss';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ProseMirror Editor Styles */
+.ProseMirror {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0;
+}
+
+.ProseMirror pre {
+  white-space: pre-wrap;
+}
+
+.ProseMirror li {
+  position: relative;
+}
+
+.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection *::-moz-selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection {
+  caret-color: transparent;
+}
+
+.ProseMirror-selectednode {
+  outline: 2px solid oklch(var(--primary));
+}
+
+li.ProseMirror-selectednode {
+  outline: none;
+}
+
+li.ProseMirror-selectednode:after {
+  content: '';
+  position: absolute;
+  left: -32px;
+  right: -2px;
+  top: -2px;
+  bottom: -2px;
+  border: 2px solid oklch(var(--primary));
+  pointer-events: none;
+}
+
+@layer base {
+  :root {
+    --radius: 0.65rem;
+    --background: 1 0 0;
+    --foreground: 0.141 0.005 285.823;
+    --card: 1 0 0;
+    --card-foreground: 0.141 0.005 285.823;
+    --popover: 1 0 0;
+    --popover-foreground: 0.141 0.005 285.823;
+    --primary: 0.541 0.281 293.009;
+    --primary-foreground: 0.969 0.016 293.756;
+    --secondary: 0.967 0.001 286.375;
+    --secondary-foreground: 0.21 0.006 285.885;
+    --muted: 0.967 0.001 286.375;
+    --muted-foreground: 0.552 0.016 285.938;
+    --accent: 0.967 0.001 286.375;
+    --accent-foreground: 0.21 0.006 285.885;
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.969 0.016 293.756;
+    --border: 0.92 0.004 286.32;
+    --input: 0.92 0.004 286.32;
+    --ring: 0.702 0.183 293.541;
+    --chart-1: 0.811 0.111 293.571;
+    --chart-2: 0.606 0.25 292.717;
+    --chart-3: 0.541 0.281 293.009;
+    --chart-4: 0.491 0.27 292.581;
+    --chart-5: 0.432 0.232 292.759;
+    --sidebar: 0.985 0 0;
+    --sidebar-background: 0.985 0 0;
+    --sidebar-foreground: 0.141 0.005 285.823;
+    --sidebar-primary: 0.541 0.281 293.009;
+    --sidebar-primary-foreground: 0.969 0.016 293.756;
+    --sidebar-accent: 0.967 0.001 286.375;
+    --sidebar-accent-foreground: 0.21 0.006 285.885;
+    --sidebar-border: 0.92 0.004 286.32;
+    --sidebar-ring: 0.702 0.183 293.541;
+  }
+
+  .dark {
+    --background: 0.141 0.005 285.823;
+    --foreground: 0.985 0 0;
+    --card: 0.21 0.006 285.885;
+    --card-foreground: 0.985 0 0;
+    --popover: 0.21 0.006 285.885;
+    --popover-foreground: 0.985 0 0;
+    --primary: 0.606 0.25 292.717;
+    --primary-foreground: 0.969 0.016 293.756;
+    --secondary: 0.274 0.006 286.033;
+    --secondary-foreground: 0.985 0 0;
+    --muted: 0.274 0.006 286.033;
+    --muted-foreground: 0.705 0.015 286.067;
+    --accent: 0.274 0.006 286.033;
+    --accent-foreground: 0.985 0 0;
+    --destructive: 0.704 0.191 22.216;
+    --destructive-foreground: 0.985 0 0;
+    --border: 1 0 0 / 10%;
+    --input: 1 0 0 / 15%;
+    --ring: 0.38 0.189 293.745;
+    --chart-1: 0.811 0.111 293.571;
+    --chart-2: 0.606 0.25 292.717;
+    --chart-3: 0.541 0.281 293.009;
+    --chart-4: 0.491 0.27 292.581;
+    --chart-5: 0.432 0.232 292.759;
+    --sidebar: 0.21 0.006 285.885;
+    --sidebar-background: 0.21 0.006 285.885;
+    --sidebar-foreground: 0.985 0 0;
+    --sidebar-primary: 0.606 0.25 292.717;
+    --sidebar-primary-foreground: 0.969 0.016 293.756;
+    --sidebar-accent: 0.274 0.006 286.033;
+    --sidebar-accent-foreground: 0.985 0 0;
+    --sidebar-border: 1 0 0 / 10%;
+    --sidebar-ring: 0.38 0.189 293.745;
+  }
+  .theme {
+    --animate-meteor: meteor 5s linear infinite;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* 全局滚动条样式 */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: oklch(var(--muted-foreground) / 0.3);
+  border-radius: 10px;
+  background-clip: padding-box; /* 让背景不延伸到 border */
+  border: 1px solid transparent; /* 这就是 padding 效果 */
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--muted-foreground) / 0.5);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+@theme inline {
+  @keyframes meteor {
+    0% {
+      transform: rotate(var(--angle)) translateX(0);
+      opacity: 1;
+    }
+    70% {
+      opacity: 1;
+    }
+    100% {
+      transform: rotate(var(--angle)) translateX(-500px);
+      opacity: 0;
+    }
+  }
+}

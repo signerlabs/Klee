@@ -1,0 +1,46 @@
+{
+  "name": "klee-server",
+  "version": "0.1.0",
+  "exports": {
+    "./client": {
+      "types": "./src/index.ts"
+    }
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/src/index.js",
+    "db:generate": "drizzle-kit generate --config ./drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config ./drizzle.config.ts",
+    "db:push": "drizzle-kit push --config ./drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config ./drizzle.config.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.46",
+    "@ai-sdk/react": "^2.0.68",
+    "@hono/node-server": "^1.19.0",
+    "@hono/zod-validator": "^0.7.4",
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.47.10",
+    "dotenv": "^16.4.5",
+    "ai": "^5.0.68",
+    "drizzle-orm": "^0.44.6",
+    "drizzle-zod": "^0.8.3",
+    "hono": "^4.9.5",
+    "nanoid": "^5.1.6",
+    "officeparser": "^5.2.1",
+    "postgres": "^3.4.7",
+    "pg": "^8.13.0",
+    "zod": "^3.25.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.17",
+    "drizzle-kit": "^0.31.4",
+    "tsx": "^4.7.1",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,51 @@
+# AWS Elastic Beanstalk 部署忽略文件
+# 只部署必要的生产文件，排除开发和测试文件
+
+# 依赖（EB 会自动运行 npm install）
+node_modules/
+
+# 开发文件
+src/
+db/
+tsconfig.json
+tsconfig.*.json
+drizzle.config.ts
+
+# 测试文件
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/
+
+# 构建产物（需随部署一起上传）
+!dist/**
+
+# 日志文件
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 环境变量（通过 eb setenv 设置）
+.env
+.env.*
+!.env.production.template
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# EB 配置（会自动生成）
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml

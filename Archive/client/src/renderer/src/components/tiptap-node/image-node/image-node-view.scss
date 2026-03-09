@@ -1,0 +1,70 @@
+:root {
+  --tiptap-image-handle-bg: var(--tt-brand-color-600);
+}
+
+.dark {
+  --tiptap-image-handle-bg: var(--tt-brand-color-400);
+}
+
+.tiptap.ProseMirror {
+  .ProseMirror-selectednode .tiptap-image .tiptap-image-container {
+    outline: 0.125rem solid transparent;
+    outline-color: var(--tt-brand-color-500);
+    border-radius: var(--tt-radius-xs, 0.25rem);
+  }
+
+  .tiptap-image {
+    display: flex;
+    width: 100%;
+    margin: 1.5rem 0;
+
+    &[data-align="right"] {
+      text-align: right;
+      justify-content: flex-end;
+    }
+
+    &[data-align="center"] {
+      text-align: center;
+      justify-content: center;
+    }
+  }
+
+  .tiptap-image-container {
+    cursor: pointer;
+    user-select: none;
+    flex-direction: column;
+    display: flex;
+  }
+
+  .tiptap-image-content {
+    align-items: center;
+    max-width: 100%;
+    display: flex;
+    position: relative;
+  }
+
+  .tiptap-image-img {
+    width: 100%;
+    border-radius: var(--tt-radius-xs, 0.25rem);
+  }
+
+  .tiptap-image-handle {
+    position: absolute;
+    top: 50%;
+    width: 0.375rem;
+    height: 3rem;
+    background-color: var(--tiptap-image-handle-bg);
+    border-radius: 1.875rem;
+    cursor: ew-resize;
+    transform: translateY(-50%);
+    z-index: 10;
+
+    &.tiptap-image-handle-left {
+      left: 4px;
+    }
+
+    &.tiptap-image-handle-right {
+      right: 4px;
+    }
+  }
+}

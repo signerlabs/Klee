@@ -1,0 +1,33 @@
+:root {
+  --tt-slash-decoration-bg-color: var(--tt-gray-light-a-100);
+  --tt-slash-decoration-color: var(--tt-gray-light-a-400);
+}
+
+.dark {
+  --tt-slash-decoration-bg-color: var(--tt-gray-dark-a-100);
+  --tt-slash-decoration-color: var(--tt-gray-dark-a-400);
+}
+
+span.tiptap-slash-decoration {
+  background: var(--tt-slash-decoration-bg-color);
+  border-radius: var(--tt-radius-xs);
+  outline: 5.5px solid var(--tt-slash-decoration-bg-color);
+}
+
+span.tiptap-slash-decoration::after {
+  color: var(--tt-slash-decoration-color);
+}
+
+span.tiptap-slash-decoration.is-empty::after {
+  content: attr(data-decoration-content);
+}
+
+.tiptap-slash-card-body {
+  width: 100%;
+}
+
+@media screen and (min-width: 480px) {
+  .tiptap-slash-card {
+    min-width: 15rem;
+  }
+}

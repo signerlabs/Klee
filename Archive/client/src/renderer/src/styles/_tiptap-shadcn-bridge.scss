@@ -1,0 +1,419 @@
+/**
+ * TipTap UI to shadcn/ui Bridge
+ * Maps ALL TipTap CSS variables to shadcn/ui theme colors for complete consistency
+ */
+
+:root {
+  /******************
+  Background & Surface Colors
+  ******************/
+
+  /* Use shadcn/ui background colors */
+  --tt-bg-color: oklch(var(--background));
+  --tt-card-bg-color: oklch(var(--card));
+  --tt-sidebar-bg-color: oklch(var(--sidebar-background));
+
+  /******************
+  Border Colors
+  ******************/
+
+  --tt-border-color: oklch(var(--border));
+  --tt-border-color-tint: oklch(var(--border) / 0.5);
+  --tt-card-border-color: oklch(var(--border) / 0.5);
+
+  /******************
+  Text Colors (Gray scale)
+  ******************/
+
+  /* Light mode grays mapped to shadcn/ui */
+  --tt-gray-light-50: oklch(var(--muted));
+  --tt-gray-light-100: oklch(var(--muted));
+  --tt-gray-light-200: oklch(var(--accent));
+  --tt-gray-light-300: oklch(var(--muted-foreground) / 0.4);
+  --tt-gray-light-400: oklch(var(--muted-foreground) / 0.6);
+  --tt-gray-light-500: oklch(var(--muted-foreground));
+  --tt-gray-light-600: oklch(var(--foreground) / 0.7);
+  --tt-gray-light-700: oklch(var(--foreground) / 0.85);
+  --tt-gray-light-800: oklch(var(--foreground) / 0.95);
+  --tt-gray-light-900: oklch(var(--foreground));
+
+  /* Alpha variants - for overlays and subtle backgrounds */
+  --tt-gray-light-a-50: oklch(var(--muted-foreground) / 0.04);
+  --tt-gray-light-a-100: oklch(var(--muted-foreground) / 0.06);
+  --tt-gray-light-a-200: oklch(var(--muted-foreground) / 0.1);
+  --tt-gray-light-a-300: oklch(var(--muted-foreground) / 0.2);
+  --tt-gray-light-a-400: oklch(var(--muted-foreground) / 0.4);
+  --tt-gray-light-a-500: oklch(var(--muted-foreground) / 0.6);
+  --tt-gray-light-a-600: oklch(var(--foreground) / 0.7);
+  --tt-gray-light-a-700: oklch(var(--foreground) / 0.85);
+  --tt-gray-light-a-800: oklch(var(--foreground) / 0.95);
+  --tt-gray-light-a-900: oklch(var(--foreground));
+
+  /******************
+  Brand Colors (Primary)
+  ******************/
+
+  /* Map all brand color steps to primary with appropriate opacities */
+  --tt-brand-color-50: oklch(var(--primary) / 0.05);
+  --tt-brand-color-100: oklch(var(--primary) / 0.1);
+  --tt-brand-color-200: oklch(var(--primary) / 0.2);
+  --tt-brand-color-300: oklch(var(--primary) / 0.4);
+  --tt-brand-color-400: oklch(var(--primary) / 0.7);
+  --tt-brand-color-500: oklch(var(--primary));
+  --tt-brand-color-600: oklch(var(--primary));
+  --tt-brand-color-700: oklch(var(--primary));
+  --tt-brand-color-800: oklch(var(--primary) / 0.9);
+  --tt-brand-color-900: oklch(var(--primary) / 0.8);
+  --tt-brand-color-950: oklch(var(--primary) / 0.7);
+
+  /******************
+  Interactive Elements
+  ******************/
+
+  --tt-cursor-color: oklch(var(--primary));
+  --tt-selection-color: oklch(var(--primary) / 0.15);
+  --tt-scrollbar-color: oklch(var(--border));
+
+  /******************
+  Toolbar
+  ******************/
+
+  --tt-toolbar-bg-color: oklch(var(--background));
+  --tt-toolbar-border-color: oklch(var(--border));
+
+  /******************
+  Shadows
+  ******************/
+
+  /* Use shadcn-compatible shadows */
+  --tt-shadow-elevated-md:
+    0px 4px 6px -1px oklch(var(--foreground) / 0.1),
+    0px 2px 4px -1px oklch(var(--foreground) / 0.06);
+
+  /******************
+  Border Radius (use shadcn radius)
+  ******************/
+
+  --tt-radius-xxs: calc(var(--radius) * 0.25);
+  --tt-radius-xs: calc(var(--radius) * 0.5);
+  --tt-radius-sm: calc(var(--radius) * 0.75);
+  --tt-radius-md: var(--radius);
+  --tt-radius-lg: calc(var(--radius) * 1.5);
+  --tt-radius-xl: calc(var(--radius) * 2);
+
+  /******************
+  Theme Text (for body text in editor)
+  ******************/
+
+  --tt-theme-text: oklch(var(--foreground));
+
+  /******************
+  Utility Colors
+  ******************/
+
+  --white: hsl(0 0% 100%);
+  --black: hsl(0 0% 0%);
+  --transparent: transparent;
+}
+
+.dark {
+  /******************
+  Dark Mode Overrides
+  ******************/
+
+  /* Background colors */
+  --tt-bg-color: oklch(var(--background));
+  --tt-card-bg-color: oklch(var(--card));
+  --tt-sidebar-bg-color: oklch(var(--sidebar-background));
+
+  /* Border colors */
+  --tt-border-color: oklch(var(--border));
+  --tt-border-color-tint: oklch(var(--border) / 0.5);
+  --tt-card-border-color: oklch(var(--border) / 0.5);
+
+  /* Dark mode grays */
+  --tt-gray-dark-50: oklch(var(--muted));
+  --tt-gray-dark-100: oklch(var(--muted));
+  --tt-gray-dark-200: oklch(var(--accent));
+  --tt-gray-dark-300: oklch(var(--muted-foreground) / 0.4);
+  --tt-gray-dark-400: oklch(var(--muted-foreground) / 0.6);
+  --tt-gray-dark-500: oklch(var(--muted-foreground));
+  --tt-gray-dark-600: oklch(var(--foreground) / 0.7);
+  --tt-gray-dark-700: oklch(var(--foreground) / 0.85);
+  --tt-gray-dark-800: oklch(var(--foreground) / 0.95);
+  --tt-gray-dark-900: oklch(var(--foreground));
+
+  /* Alpha variants for dark mode */
+  --tt-gray-dark-a-50: oklch(var(--muted-foreground) / 0.04);
+  --tt-gray-dark-a-100: oklch(var(--muted-foreground) / 0.06);
+  --tt-gray-dark-a-200: oklch(var(--muted-foreground) / 0.1);
+  --tt-gray-dark-a-300: oklch(var(--muted-foreground) / 0.2);
+  --tt-gray-dark-a-400: oklch(var(--muted-foreground) / 0.4);
+  --tt-gray-dark-a-500: oklch(var(--muted-foreground) / 0.6);
+  --tt-gray-dark-a-600: oklch(var(--foreground) / 0.7);
+  --tt-gray-dark-a-700: oklch(var(--foreground) / 0.85);
+  --tt-gray-dark-a-800: oklch(var(--foreground) / 0.95);
+  --tt-gray-dark-a-900: oklch(var(--foreground));
+
+  /* Brand colors for dark mode */
+  --tt-brand-color-50: oklch(var(--primary) / 0.05);
+  --tt-brand-color-100: oklch(var(--primary) / 0.1);
+  --tt-brand-color-200: oklch(var(--primary) / 0.2);
+  --tt-brand-color-300: oklch(var(--primary) / 0.3);
+  --tt-brand-color-400: oklch(var(--primary) / 0.8);
+  --tt-brand-color-500: oklch(var(--primary));
+  --tt-brand-color-600: oklch(var(--primary));
+  --tt-brand-color-700: oklch(var(--primary));
+  --tt-brand-color-800: oklch(var(--primary) / 0.8);
+  --tt-brand-color-900: oklch(var(--primary) / 0.6);
+  --tt-brand-color-950: oklch(var(--primary) / 0.5);
+
+  /* Interactive elements */
+  --tt-cursor-color: oklch(var(--primary));
+  --tt-selection-color: oklch(var(--primary) / 0.25);
+  --tt-scrollbar-color: oklch(var(--border));
+
+  /* Toolbar */
+  --tt-toolbar-bg-color: oklch(var(--background));
+  --tt-toolbar-border-color: oklch(var(--border));
+
+  /* Darker shadows for dark mode */
+  --tt-shadow-elevated-md:
+    0px 10px 15px -3px oklch(var(--foreground) / 0.15),
+    0px 4px 6px -2px oklch(var(--foreground) / 0.08);
+
+  /* Theme text */
+  --tt-theme-text: oklch(var(--foreground));
+}
+
+/******************
+Component-Specific Overrides
+These ensure all TipTap components use shadcn/ui styling consistently
+******************/
+
+/* Toolbars, Menus, and Popovers */
+.tiptap-ui-primitive-toolbar,
+.tiptap-ui-primitive-menu,
+.tiptap-ui-primitive-popover-content,
+.tiptap-ui-primitive-dropdown-menu-content,
+.tiptap-toolbar {
+  background-color: oklch(var(--popover)) !important;
+  border-color: oklch(var(--border)) !important;
+  color: oklch(var(--popover-foreground)) !important;
+}
+
+/* Floating toolbar specifically */
+.tiptap-toolbar[data-variant='floating'] {
+  background-color: oklch(var(--popover)) !important;
+  border: 1px solid oklch(var(--border)) !important;
+  border-radius: calc(var(--radius) * 1.5) !important;
+  box-shadow:
+    0 4px 6px -1px oklch(var(--foreground) / 0.1),
+    0 2px 4px -1px oklch(var(--foreground) / 0.06) !important;
+}
+
+/* Buttons - complete shadcn/ui alignment */
+.tiptap-button,
+.tiptap-ui-primitive-button {
+  /* Use shadcn radius */
+  border-radius: var(--radius) !important;
+
+  /* Default state */
+  &:not([data-style]) {
+    background-color: transparent;
+    color: oklch(var(--foreground) / 0.7);
+
+    &:hover {
+      background-color: oklch(var(--accent));
+      color: oklch(var(--accent-foreground));
+    }
+
+    &[data-state='active'],
+    &[data-active-state='on'],
+    &[aria-pressed='true'] {
+      background-color: oklch(var(--accent));
+      color: oklch(var(--accent-foreground));
+    }
+  }
+
+  /* Ghost variant (most common in TipTap) */
+  &[data-style='ghost'] {
+    background-color: transparent;
+    color: oklch(var(--foreground) / 0.7);
+
+    &:hover:not([disabled]) {
+      background-color: oklch(var(--accent));
+      color: oklch(var(--accent-foreground));
+    }
+
+    &[data-state='active']:not([disabled]),
+    &[data-active-state='on']:not([disabled]),
+    &[aria-pressed='true']:not([disabled]) {
+      background-color: oklch(var(--accent));
+      color: oklch(var(--accent-foreground));
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  /* Primary variant */
+  &[data-style='primary'] {
+    background-color: oklch(var(--primary));
+    color: oklch(var(--primary-foreground));
+
+    &:hover:not([disabled]) {
+      background-color: oklch(var(--primary) / 0.9);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+}
+
+/* Tooltips */
+.tiptap-ui-primitive-tooltip-content {
+  background-color: oklch(var(--popover)) !important;
+  border: 1px solid oklch(var(--border)) !important;
+  color: oklch(var(--popover-foreground)) !important;
+  border-radius: var(--radius) !important;
+  box-shadow:
+    0 4px 6px -1px oklch(var(--foreground) / 0.1),
+    0 2px 4px -1px oklch(var(--foreground) / 0.06) !important;
+}
+
+/* Card components */
+.tiptap-ui-primitive-card {
+  background-color: oklch(var(--card)) !important;
+  border: 1px solid oklch(var(--border)) !important;
+  color: oklch(var(--card-foreground)) !important;
+  border-radius: calc(var(--radius) * 1.5) !important;
+}
+
+/* Input fields */
+.tiptap-ui-primitive-input,
+.tiptap-ui-primitive-textarea {
+  background-color: oklch(var(--background)) !important;
+  border: 1px solid oklch(var(--input)) !important;
+  color: oklch(var(--foreground)) !important;
+  border-radius: var(--radius) !important;
+
+  &:focus,
+  &:focus-visible {
+    outline: none !important;
+    border-color: oklch(var(--ring)) !important;
+    box-shadow: 0 0 0 1px oklch(var(--ring)) !important;
+  }
+
+  &::placeholder {
+    color: oklch(var(--muted-foreground)) !important;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+/* Separators */
+.tiptap-ui-primitive-separator,
+.tiptap-separator {
+  background-color: oklch(var(--border)) !important;
+}
+
+/* Floating menus and toolbars */
+.notion-like-editor-content {
+  .tiptap-ui-utils-floating-element {
+    .tiptap-ui-primitive-toolbar {
+      background-color: oklch(var(--popover)) !important;
+      border: 1px solid oklch(var(--border)) !important;
+      box-shadow:
+        0 4px 6px -1px oklch(var(--foreground) / 0.1),
+        0 2px 4px -1px oklch(var(--foreground) / 0.06) !important;
+      border-radius: calc(var(--radius) * 1.5) !important;
+    }
+  }
+}
+
+/* Slash menu */
+.tiptap-ui-slash-dropdown-menu {
+  background-color: oklch(var(--popover)) !important;
+  border: 1px solid oklch(var(--border)) !important;
+  color: oklch(var(--popover-foreground)) !important;
+  border-radius: calc(var(--radius) * 1.5) !important;
+  box-shadow:
+    0 4px 6px -1px oklch(var(--foreground) / 0.1),
+    0 2px 4px -1px oklch(var(--foreground) / 0.06) !important;
+
+  .tiptap-ui-slash-dropdown-menu-item {
+    color: oklch(var(--foreground));
+    border-radius: calc(var(--radius) * 0.75) !important;
+
+    &:hover,
+    &[data-selected='true'] {
+      background-color: oklch(var(--accent)) !important;
+      color: oklch(var(--accent-foreground)) !important;
+    }
+  }
+}
+
+/* Emoji and Mention menus */
+.tiptap-ui-emoji-menu,
+.tiptap-ui-mention-dropdown-menu {
+  background-color: oklch(var(--popover)) !important;
+  border: 1px solid oklch(var(--border)) !important;
+  color: oklch(var(--popover-foreground)) !important;
+  border-radius: calc(var(--radius) * 1.5) !important;
+  box-shadow:
+    0 4px 6px -1px oklch(var(--foreground) / 0.1),
+    0 2px 4px -1px oklch(var(--foreground) / 0.06) !important;
+}
+
+/* Editor content area */
+.notion-like-editor-content {
+  color: oklch(var(--foreground));
+
+  .ProseMirror {
+    color: oklch(var(--foreground));
+
+    /* Placeholder text */
+    &::placeholder,
+    .is-empty::before {
+      color: oklch(var(--muted-foreground)) !important;
+    }
+
+    /* Selection */
+    ::selection {
+      background-color: oklch(var(--primary) / 0.15);
+    }
+
+    /* Selected nodes */
+    .ProseMirror-selectednode {
+      outline: 2px solid oklch(var(--primary)) !important;
+    }
+  }
+
+  /* Reduce padding since NoteEditor already has padding */
+  .tiptap.ProseMirror.notion-like-editor {
+    padding: 2rem 0 10vh !important;
+  }
+
+  @media screen and (max-width: 480px) {
+    .tiptap.ProseMirror.notion-like-editor {
+      padding: 0.5rem 0 10vh !important;
+    }
+  }
+}
+
+/* Drag handle (if visible) */
+.tiptap-drag-handle {
+  color: oklch(var(--muted-foreground)) !important;
+
+  &:hover {
+    color: oklch(var(--foreground)) !important;
+  }
+}

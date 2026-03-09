@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16  # Pre-installed pgvector extension
+    restart: unless-stopped
+    container_name: klee-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: klee
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: klee-postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # Data persistence
+
+volumes:
+  postgres-data:
