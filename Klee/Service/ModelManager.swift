@@ -26,51 +26,6 @@ class ModelManager {
     /// 系统物理内存（GB）
     private(set) var systemRAM: Int = 0
 
-    // MARK: - 预定义推荐模型列表（按内存分级）
-
-    static let recommendedModels: [ModelInfo] = [
-        // 8GB 机型
-        ModelInfo(
-            id: "mlx-community/Qwen3-4B-4bit",
-            name: "Qwen3 4B",
-            size: "~2.5 GB",
-            minRAM: 8
-        ),
-        // 16GB 机型
-        ModelInfo(
-            id: "mlx-community/Llama-3.3-8B-Instruct-4bit",
-            name: "Llama 3.3 8B",
-            size: "~5 GB",
-            minRAM: 16
-        ),
-        ModelInfo(
-            id: "mlx-community/Qwen3-8B-4bit",
-            name: "Qwen3 8B",
-            size: "~5 GB",
-            minRAM: 16
-        ),
-        // 32GB 机型
-        ModelInfo(
-            id: "mlx-community/Mistral-Small-24B-Instruct-2501-4bit",
-            name: "Mistral Small 24B",
-            size: "~12 GB",
-            minRAM: 32
-        ),
-        ModelInfo(
-            id: "mlx-community/Qwen3-14B-4bit",
-            name: "Qwen3 14B",
-            size: "~8 GB",
-            minRAM: 32
-        ),
-        // 64GB+ 机型
-        ModelInfo(
-            id: "mlx-community/Qwen3-32B-4bit",
-            name: "Qwen3 32B",
-            size: "~18 GB",
-            minRAM: 64
-        ),
-    ]
-
     // MARK: - 初始化
 
     init() {
@@ -85,7 +40,7 @@ class ModelManager {
 
     /// 检测系统内存，过滤出当前机器可运行的模型
     func filterBySystemRAM() {
-        availableModels = Self.recommendedModels.filter { $0.minRAM <= systemRAM }
+        availableModels = ModelInfo.recommended.filter { $0.minRAM <= systemRAM }
     }
 
     // MARK: - 刷新缓存模型列表
