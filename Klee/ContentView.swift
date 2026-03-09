@@ -2,76 +2,83 @@
 //  ContentView.swift
 //  Klee
 //
-//  Main container view with NavigationSplitView: ChatView + StatusView sidebar.
+//  主容器视图：NavigationSplitView 布局。
+//  侧边栏：模型管理。详情区：聊天视图。
+//  Phase 1 重构：移除 ProcessManager，使用 LLMService + ModelManager。
 //
 
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var processManager: ProcessManager
-    @EnvironmentObject var wsManager: WebSocketManager
+    @Environment(LLMService.self) var llmService
+    @Environment(ModelManager.self) var modelManager
 
     var body: some View {
         NavigationSplitView {
-            StatusView(processManager: processManager, wsManager: wsManager)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 400)
+            sidebarContent
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         } detail: {
-            ChatView(wsManager: wsManager)
+            ChatView()
         }
         .navigationTitle("Klee")
         .task {
-            // K3: Auto-start services and connect WebSocket on launch
-            await processManager.startAll()
-            wsManager.connect()
+            // 启动时自动加载上次使用的模型
+            if let lastModelId = modelManager.selectedModelId,
+               modelManager.isCached(lastModelId) {
+                await llmService.loadModel(id: lastModelId)
+            }
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
-                connectionBadge
+                statusBadge
             }
         }
     }
 
-    // MARK: - Connection Badge
+    // MARK: - 侧边栏
 
-    /// Small badge in the toolbar showing overall health.
-    private var connectionBadge: some View {
+    private var sidebarContent: some View {
+        VStack(spacing: 0) {
+            ModelManagerView()
+        }
+    }
+
+    // MARK: - 状态标识
+
+    private var statusBadge: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(overallStatusColor)
+                .fill(statusColor)
                 .frame(width: 8, height: 8)
-            Text(overallStatusLabel)
+            Text(statusLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var overallStatusColor: Color {
-        if processManager.ollamaState.isRunning && processManager.openclawState.isRunning {
-            return wsManager.connectionState == .connected ? .green : .orange
+    private var statusColor: Color {
+        switch llmService.state {
+        case .ready:        return .green
+        case .generating:   return .green
+        case .loading:      return .orange
+        case .error:        return .red
+        case .idle:         return .gray
         }
-        if case .error = processManager.ollamaState { return .red }
-        if case .error = processManager.openclawState { return .red }
-        if processManager.ollamaState == .starting || processManager.openclawState == .starting {
-            return .orange
-        }
-        return .gray
     }
 
-    private var overallStatusLabel: String {
-        if processManager.ollamaState.isRunning && processManager.openclawState.isRunning {
-            return wsManager.connectionState == .connected ? "Ready" : "Connecting..."
+    private var statusLabel: String {
+        switch llmService.state {
+        case .ready:        return "Ready"
+        case .generating:   return "Generating"
+        case .loading:      return "Loading..."
+        case .error:        return "Error"
+        case .idle:         return "Not Loaded"
         }
-        if processManager.ollamaState == .starting || processManager.openclawState == .starting {
-            return "Starting..."
-        }
-        if case .error = processManager.ollamaState { return "Error" }
-        if case .error = processManager.openclawState { return "Error" }
-        return "Stopped"
     }
 }
 
 #Preview {
     ContentView()
-        .environmentObject(ProcessManager())
-        .environmentObject(WebSocketManager(port: 18789, token: "preview"))
+        .environment(LLMService())
+        .environment(ModelManager())
 }

@@ -1,30 +1,59 @@
-# Klee 新架构方案：SwiftUI + Ollama + OpenClaw
+# Klee 架构方案：SwiftUI + MLX Swift + OpenClaw
 
-> 目标：打造一个类 Claude Desktop 体验的本地 AI Agent 桌面应用，完全本地运行，零 API 费用，数据不出本机。
+> 目标：打造一个类 Claude Desktop 体验的本地 AI 桌面应用，完全本地运行，零 API 费用，数据不出本机。
 
 ---
 
 ## 一、产品定位
 
-把 `ollama launch openclaw` 这条命令，包成一个漂亮的 Mac 原生 app，让普通用户也能使用本地 AI Agent。
+一个 Mac 原生的本地 AI 聊天应用，让普通用户无需终端操作就能使用开源大模型。
 
 **核心价值主张：**
-- 下载即用，无需终端操作
-- 完全本地运行，数据私密
-- 借助 Ollama + OpenClaw 开源生态持续成长
-- 原生 SwiftUI，体积小、性能好、Mac 系统深度整合
+- 下载即用，零配置，无需安装 Ollama / Python / 任何外部依赖
+- 完全本地推理，数据私密
+- Apple Silicon 原生优化，性能最优（MLX 引擎比 llama.cpp 快 21%-87%）
+- 原生 SwiftUI，体积小、内存低、Mac 系统深度整合
+- 后续通过 OpenClaw Gateway 获得 AI Agent 能力
 
 ---
 
 ## 二、技术架构
 
+### 核心引擎选择：MLX Swift
+
+**为什么不用 Ollama：**
+
+| 问题 | 说明 |
+|------|------|
+| 架构定位转变 | Ollama v0.10+ 转型为独立桌面产品（内置 GUI + Menu Bar），不再是可嵌入组件 |
+| 进程管理复杂 | 需要管理子进程生命周期、防孤儿、Watchdog、端口冲突 |
+| 签名/公证困难 | 外部二进制需单独签名、Gatekeeper/provenance 问题频发 |
+| 性能开销 | HTTP API 中转层 + 独立进程内存开销，实测 20-40 tok/s |
+| 版本追赶 | 每次 Ollama 架构变化都可能破坏嵌入方案 |
+
+**为什么选 MLX Swift：**
+
+| 优势 | 说明 |
+|------|------|
+| Apple 官方 | Apple ML Research 团队维护，WWDC 2025 两个专题 Session |
+| 纯 Swift | SPM 依赖，编译进 app，无外部进程、无 Python |
+| 性能最优 | Apple Silicon 统一内存零拷贝，~230 tok/s（M2 Ultra） |
+| 零配置 | 用户无需安装任何东西 |
+| 模型丰富 | mlx-community 122+ 模型集合，主流模型全覆盖 |
+| 双平台 | 同一套代码可跑 macOS + iOS |
+
+### 整体架构
+
 ```
-Klee.app (SwiftUI)
-├── UI 层：SwiftUI 原生界面（对话、设置、onboarding）
-├── 进程管理层：Swift Process 管理两个子进程
-│   ├── Ollama（Go binary，本地推理引擎，端口 11435）
-│   └── OpenClaw Gateway（Node.js，AI Agent 运行时，WebSocket 端口 18789）
-└── 通信层：URLSessionWebSocketTask 接入 OpenClaw Gateway
+Klee.app (SwiftUI macOS)
+├── UI 层：SwiftUI 原生界面（对话、模型管理、设置、onboarding）
+├── LLM 推理层：mlx-swift-lm（SPM 依赖，进程内推理）
+│   ├── 模型加载（从 HuggingFace 下载，本地缓存）
+│   ├── 流式推理（Metal GPU 加速）
+│   └── 量化支持（3/4/5/6/8-bit）
+└── Agent 层（Phase 2）：OpenClaw Gateway
+    ├── Node.js 子进程管理
+    └── WebSocket 通信
 ```
 
 ### App Bundle 结构
@@ -32,26 +61,52 @@ Klee.app (SwiftUI)
 ```
 Klee.app/
 └── Contents/
-    └── Resources/
-        ├── ollama              # Go binary，~56MB
-        ├── node                # Node.js 22 官方 binary，~80MB
-        └── openclaw/           # 预装好的 npm 目录（优化后 ~200MB）
-            ├── node_modules/
-            └── package.json
+    ├── MacOS/
+    │   └── Klee              # SwiftUI 主程序（含 MLX 引擎，静态链接）
+    ├── Resources/
+    │   └── (app resources)
+    └── Frameworks/
+        └── (MLX Metal shaders 等)
+```
+
+Phase 2 增加 OpenClaw 后：
+```
+Klee.app/
+└── Contents/
+    ├── MacOS/
+    │   └── Klee
+    ├── Resources/
+    │   ├── node              # Node.js 22 binary，~80MB
+    │   └── openclaw/         # 预装 npm 目录
+    │       ├── node_modules/
+    │       └── package.json
+    └── Frameworks/
 ```
 
 ### App Bundle 体积预估
 
+**Phase 1（纯聊天）：**
+
 | 组件 | 体积 |
 |------|------|
-| Klee SwiftUI 本体 | ~10 MB |
-| Ollama binary (arm64) | ~56 MB |
+| Klee SwiftUI 本体 + MLX 引擎 | ~60 MB |
+| Metal shaders (mlx.metallib) | ~10 MB |
+| **总计** | **~70 MB** |
+| DMG 压缩后 | **~40 MB** |
+
+注意：模型文件不打包进 app，首次使用时按需下载到 `~/Library/Caches/huggingface/`。
+
+**Phase 2（+OpenClaw Agent）：**
+
+| 组件 | 体积 |
+|------|------|
+| Phase 1 全部 | ~70 MB |
 | Node.js 22 binary (arm64) | ~80 MB |
 | OpenClaw node_modules（优化后） | ~200 MB |
 | **总计** | **~350 MB** |
 | DMG 压缩后 | **~220 MB** |
 
-竞品参考：Claude Desktop ~400MB，Cursor ~500MB，350MB 完全可接受。
+竞品参考：Claude Desktop ~400MB，Cursor ~500MB，LM Studio ~300MB（Electron）。
 
 ---
 
@@ -59,13 +114,13 @@ Klee.app/
 
 ### 为什么用 SwiftUI 而不是 Electron
 
-| 对比项 | Electron（旧 Klee） | SwiftUI（新方案） |
+| 对比项 | Electron（LM Studio / Jan） | SwiftUI（Klee） |
 |---|---|---|
-| 包体积 | 200MB+ | 紧凑 |
-| 内存占用 | 高 | 低 |
-| macOS 整合 | 弱 | 深度原生 |
-| 开发效率 | 一般 | Wei 的主场 |
-| Apple Silicon 优化 | 有限 | 完整 Metal 加速 |
+| 包体积 | 200MB+ 基础开销 | 紧凑 |
+| 内存占用 | ~300MB 基础 | ~50MB 基础 |
+| macOS 整合 | 弱 | 深度原生（Notification、Spotlight、Share） |
+| Apple Silicon 优化 | 有限 | 完整 Metal 加速 + 统一内存 |
+| 推理引擎嵌入 | 需要子进程/IPC | 直接链接，进程内调用 |
 
 ### 为什么放弃 RAG
 
@@ -74,6 +129,133 @@ Agent + 长上下文的组合比 RAG 更优雅：
 - 没有 Python 依赖、没有 LanceDB
 - 技术栈极度简化
 
+### MLX vs llama.cpp
+
+| 对比项 | MLX Swift | llama.cpp |
+|---|---|---|
+| Apple Silicon 性能 | **最优**（~230 tok/s） | 良好（~150 tok/s） |
+| Swift 集成 | 官方 SPM，原生 API | 需 C 桥接（unsafeFlags 问题） |
+| 模型格式 | safetensors (MLX) | GGUF |
+| 模型生态 | mlx-community 122+ 集合 | GGUF 最广泛（60+ 架构） |
+| 维护方 | Apple ML Research | 社区 |
+| Metal 优化 | 原生设计 | 后加的 Metal backend |
+
+**结论**：Klee 只做 Mac，MLX 是 Apple Silicon 上的最优选择。llama.cpp 的优势在跨平台，对我们无价值。
+
+### Foundation Models Framework（macOS 26）
+
+Apple 在 WWDC 2025 发布的系统内置 LLM API，3B 参数模型：
+- **优点**：零依赖，3 行代码，系统内置
+- **缺点**：只有 Apple 的 3B 模型，不可更换，能力有限
+- **策略**：作为**补充功能**（摘要、分类等轻量任务），不作为核心聊天引擎
+
+---
+
+## 四、MLX 推理层设计
+
+### SPM 依赖
+
+```swift
+// Package.swift 或 Xcode: File > Add Package Dependencies
+dependencies: [
+    .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "2.30.0"),
+]
+```
+
+只需引入 `mlx-swift-lm`，它会自动拉取底层的 `mlx-swift`。
+
+### 核心推理代码
+
+```swift
+import MLXLMCommon
+
+class LLMService: ObservableObject {
+    @Published var isLoading = false
+    @Published var currentModel: String?
+
+    private var model: ModelContainer?
+    private var session: ChatSession?
+
+    /// 加载模型（从 HuggingFace 下载或读取缓存）
+    func loadModel(id: String) async throws {
+        isLoading = true
+        defer { isLoading = false }
+
+        model = try await loadModel(id: id)  // e.g. "mlx-community/Qwen3-4B-4bit"
+        session = ChatSession(model!)
+        currentModel = id
+    }
+
+    /// 流式聊天
+    func chat(prompt: String) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            Task {
+                guard let session else { return }
+                for try await token in session.streamResponse(to: prompt) {
+                    continuation.yield(token)
+                }
+                continuation.finish()
+            }
+        }
+    }
+}
+```
+
+### 模型管理
+
+模型文件存储在 HuggingFace Hub 的标准缓存目录：`~/Library/Caches/huggingface/hub/`
+
+```swift
+class ModelManager: ObservableObject {
+    @Published var availableModels: [ModelInfo] = []
+    @Published var downloadProgress: [String: Double] = [:]
+
+    /// 预定义的推荐模型列表
+    static let recommendedModels: [ModelInfo] = [
+        ModelInfo(id: "mlx-community/Qwen3-4B-4bit", name: "Qwen3 4B", size: "~2.5 GB", minRAM: 8),
+        ModelInfo(id: "mlx-community/Llama-3.3-8B-Instruct-4bit", name: "Llama 3.3 8B", size: "~5 GB", minRAM: 16),
+        ModelInfo(id: "mlx-community/Mistral-Small-24B-Instruct-2501-4bit", name: "Mistral Small 24B", size: "~12 GB", minRAM: 32),
+        ModelInfo(id: "mlx-community/Qwen3-32B-4bit", name: "Qwen3 32B", size: "~18 GB", minRAM: 32),
+    ]
+
+    /// 检测系统内存，过滤可运行的模型
+    func filterBySystemRAM() {
+        let totalRAM = ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)  // GB
+        availableModels = Self.recommendedModels.filter { $0.minRAM <= totalRAM }
+    }
+
+    /// 下载模型（支持进度回调）
+    func downloadModel(id: String) async throws {
+        // mlx-swift-lm 的 loadModel 自带下载功能
+        // 通过 HuggingFace Hub 下载，支持断点续传
+    }
+
+    /// 删除已缓存的模型
+    func deleteModel(id: String) throws {
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let modelDir = cacheDir.appendingPathComponent("huggingface/hub/models--\(id.replacingOccurrences(of: "/", with: "--"))")
+        try FileManager.default.removeItem(at: modelDir)
+    }
+}
+```
+
+### 模型推荐策略（按内存）
+
+| 系统内存 | 推荐模型 | 模型大小 | 预期速度 |
+|---------|---------|---------|---------|
+| 8GB | Qwen3-4B-4bit | ~2.5 GB | ~80 tok/s |
+| 16GB | Llama-3.3-8B-4bit 或 Qwen3-8B-4bit | ~5 GB | ~60 tok/s |
+| 32GB | Mistral-Small-24B-4bit 或 Qwen3-14B-4bit | ~12 GB | ~40 tok/s |
+| 64GB+ | Qwen3-32B-4bit | ~18 GB | ~25 tok/s |
+
+注意：MLX 利用统一内存，8GB Mac 也能跑 4B 模型，这是相比 Ollama 方案的重大改进（之前 8GB 被标为"不建议"）。
+
+---
+
+## 五、OpenClaw Agent 层（Phase 2）
+
+Phase 1 只做纯聊天，Phase 2 加入 OpenClaw Gateway 获得 AI Agent 能力（Tool Calling、文件操作、Shell 执行等）。
+
 ### 运行时选择：Node.js，不用 Bun
 
 OpenClaw 官方文档明确标注：
@@ -81,139 +263,61 @@ OpenClaw 官方文档明确标注：
 - 从 2026.2.26 起 Bun 全局安装路径会导致插件校验失败，gateway 拒绝启动
 - **必须使用 Node >= 22**
 
-### 为什么不用 pkg 打成单 binary
+### 进程管理
 
-- `pkg` 对 Node 22 支持不稳定，已废弃
-- SEA 不支持原生模块，nexe 不成熟，Bun compile 不兼容
-- OpenClaw 有大量动态 require 和原生模块（better-sqlite3、sharp 等）
-- UPX 压缩与 codesign 不兼容
-- 直接打包 node binary + 源码目录更可靠（Raycast 同方案）
-
----
-
-## 四、进程生命周期管理
-
-### 启动流程
+OpenClaw 作为子进程运行，由 Klee 管理生命周期：
 
 ```swift
-class ProcessManager: ObservableObject {
-    private var ollamaProcess: Process?
-    private var openclawProcess: Process?
+class OpenClawManager: ObservableObject {
+    private var process: Process?
+    private let port: Int = 18789
+    private let token: String = UUID().uuidString
 
-    // Ollama uses non-default port to avoid conflict with user's existing Ollama
-    private let ollamaPort: Int = 11435
-    private let openclawPort: Int = 18789
+    func start() async throws {
+        let resourcesPath = Bundle.main.resourcePath!
+        let nodePath = "\(resourcesPath)/node"
+        let openclawPath = "\(resourcesPath)/openclaw"
 
-    func startAll() async throws {
-        // 0. Clean up stale processes from previous crash
-        try await cleanupStaleProcesses()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: nodePath)
+        process.arguments = ["\(openclawPath)/node_modules/.bin/openclaw", "gateway"]
 
-        // 1. Check if user already has Ollama running on 11434
-        let userOllamaRunning = await checkPort(11434)
+        var env = ProcessInfo.processInfo.environment
+        env["OPENCLAW_GATEWAY_PORT"] = "\(port)"
+        env["OPENCLAW_GATEWAY_TOKEN"] = token
+        env["HOME"] = NSHomeDirectory()
+        process.environment = env
 
-        // 2. Start Ollama on our dedicated port (or reuse user's)
-        try await startOllama(reuseExisting: userOllamaRunning)
+        try process.run()
+        self.process = process
 
-        // 3. Poll until Ollama is ready
-        try await waitForOllama()
-
-        // 4. Start OpenClaw with Ollama address injected
-        try await startOpenClaw()
+        try await waitForReady()
     }
 
-    private func waitForOllama() async throws {
-        let url = URL(string: "http://127.0.0.1:\(ollamaPort)/")!
-        for _ in 0..<30 {
-            if let _ = try? await URLSession.shared.data(from: url) {
-                return // Returns "Ollama is running"
-            }
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-        throw AppError.ollamaStartTimeout
+    func shutdown() {
+        process?.terminate()
     }
 }
 ```
 
-### 环境变量配置
+### 防孤儿进程
 
-从系统环境继承后再追加，否则子进程会缺失 PATH/LANG 等关键变量：
-
-```swift
-// Ollama environment
-var ollamaEnv = ProcessInfo.processInfo.environment
-ollamaEnv["OLLAMA_HOST"] = "127.0.0.1:\(ollamaPort)"
-ollamaEnv["OLLAMA_MODELS"] = kleeModelsPath  // ~/Library/Application Support/Klee/OllamaModels/
-ollamaEnv["OLLAMA_KEEP_ALIVE"] = "10m"
-ollamaEnv["OLLAMA_FLASH_ATTENTION"] = "1"
-ollamaEnv["OLLAMA_MAX_LOADED_MODELS"] = "1"
-ollamaProcess.environment = ollamaEnv
-
-// OpenClaw environment
-var openclawEnv = ProcessInfo.processInfo.environment
-openclawEnv["OLLAMA_HOST"] = "http://127.0.0.1:\(ollamaPort)"
-openclawEnv["HOME"] = NSHomeDirectory()
-openclawEnv["OPENCLAW_GATEWAY_PORT"] = "\(openclawPort)"
-openclawEnv["OPENCLAW_GATEWAY_TOKEN"] = generatedToken
-openclawProcess.environment = openclawEnv
-```
-
-### Graceful Shutdown
+仅 Phase 2 需要（Phase 1 无子进程）：
 
 ```swift
-// In AppDelegate
-func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    // Return .terminateLater to allow async cleanup
-    Task {
-        await processManager.shutdownAll()
-        NSApplication.shared.reply(toApplicationShouldTerminate: true)
-    }
-    return .terminateLater
-}
-
-// Tiered shutdown: SIGTERM -> wait 3s -> SIGINT -> wait 2s -> SIGKILL
-func shutdownAll() async {
-    // Unload model to release VRAM before stopping Ollama
-    try? await sendOllamaKeepAlive(seconds: 0)
-
-    for process in [openclawProcess, ollamaProcess].compactMap({ $0 }) {
-        process.terminate()  // SIGTERM
-        try? await Task.sleep(nanoseconds: 3_000_000_000)
-        if process.isRunning {
-            process.interrupt()  // SIGINT
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-        }
-        if process.isRunning {
-            kill(process.processIdentifier, SIGKILL)
-        }
-    }
-}
-```
-
-### 防孤儿进程机制
-
-Force Quit 或 crash 时子进程不会收到 terminate 信号，需要保底措施：
-
-1. **启动时清理**：检查端口 11435/18789 是否被残留进程占用，若是则 kill
-2. **Watchdog 子进程**：启动一个轻量 shell script 监控父进程 PID
-
-```swift
-// Launch watchdog that monitors parent PID
 func startWatchdog() {
     let parentPID = ProcessInfo.processInfo.processIdentifier
     let script = """
     while kill -0 \(parentPID) 2>/dev/null; do sleep 2; done
-    kill \(ollamaProcess.processIdentifier) 2>/dev/null
-    kill \(openclawProcess.processIdentifier) 2>/dev/null
+    kill \(process.processIdentifier) 2>/dev/null
     """
     // Run as background Process
 }
 ```
 
----
+### WebSocket 通信
 
-## 五、WebSocket 通信
-
-使用原生 `URLSessionWebSocketTask`（零依赖，支持 async/await）接入 OpenClaw Gateway：
+使用原生 `URLSessionWebSocketTask` 接入 OpenClaw Gateway：
 
 ```swift
 let url = URL(string: "ws://127.0.0.1:\(openclawPort)")!
@@ -222,73 +326,84 @@ request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
 let task = URLSession.shared.webSocketTask(with: request)
 task.resume()
+```
 
-// API commands
-// - chat.send: send a message
-// - chat.history: get chat history
-// - chat.inject: inject system prompt
+### node_modules 优化
+
+OpenClaw 全量 `npm install` 约 1.4 GB，打包前必须优化：
+
+```bash
+# 1. 只安装生产依赖
+npm install --omit=dev
+
+# 2. 移除不需要的重型可选依赖
+rm -rf node_modules/node-llama-cpp      # ~600MB，Klee 用 MLX 推理
+rm -rf node_modules/@napi-rs/canvas     # ~152MB
+
+# 3. 清理测试/文档/TypeScript 源码
+npx node-prune
+
+# 4. 移除非 darwin-arm64 平台预编译
+find node_modules -path "*/prebuilds/linux-*" -exec rm -rf {} +
+find node_modules -path "*/prebuilds/win32-*" -exec rm -rf {} +
+find node_modules -path "*/prebuilds/darwin-x64" -exec rm -rf {} +
+```
+
+**Phase 2 前置验证**（阻塞 Phase 2 开发）：
+
+```bash
+# 确认删除 node-llama-cpp 和 @napi-rs/canvas 后 Gateway 仍可正常工作
+# 详见 Phase 2 行动计划
 ```
 
 ---
 
-## 六、推荐模型配置（按内存）
-
-| 内存 | 推荐方案 |
-|---|---|
-| 8GB | 不建议纯本地，使用 Cloud API 模式 |
-| 16GB | `qwen3:8b` 主模型 + `GLM-4.7-Flash` fallback |
-| 32GB | `Devstral-24B`（14GB，稳定）或 `Qwen3-Coder:32B`（20GB，最强）|
-| 64GB+ | `Qwen3-Coder:32B` + `GLM-4.7-Flash` 双模型轮换 |
-
-**关键要求：** OpenClaw 最少需要 32K context，生产建议 65K+。7B 以下模型 tool calling 不稳定，不适合 agent 任务。
-
----
-
-## 七、分发方式：Developer ID 直接分发
+## 六、分发方式：Developer ID 直接分发
 
 ### 为什么不走 App Store
 
-App Store 沙盒与这套架构根本不兼容：
-1. **Sandbox 禁止 spawn 子进程执行任意代码**（Node.js 进程）
-2. **OpenClaw 的核心能力**（shell 执行、文件读写、控制其他 app）全部被沙盒封死
-3. Node.js runtime 类似 Java，会被 Apple 以"deprecated technology"拒绝
+Phase 2 的 OpenClaw 集成与 App Store 沙盒不兼容：
+1. Sandbox 禁止 spawn 子进程执行任意代码（Node.js 进程）
+2. OpenClaw 的核心能力（shell 执行、文件读写）全部被沙盒封死
+3. Node.js runtime 会被 Apple 以 "deprecated technology" 拒绝
 
-**先例：** FreeChat 作者明确表示，为了进 App Store 专门放弃了 Ollama，改用直接集成 llama.cpp。
+Phase 1 理论上可以走 App Store（无子进程），但为了 Phase 2 的一致性，从一开始就用 Developer ID 分发。
 
-### Xcode 打包流程
+### Xcode 配置
 
-**1. Signing 配置**
-- Certificate：`Developer ID Application`（不是 Apple Distribution）
+- Certificate：`Developer ID Application`
 - App Sandbox：**关闭**
 - Hardened Runtime：**开启**（公证硬性要求）
 
-**2. 签名流程（由内到外，不用 --deep）**
+### 签名流程
 
-Apple 不推荐 `--deep`，必须逐个签名，每个都加 `--options runtime --timestamp`：
+Phase 1 签名非常简单（没有外部二进制）：
 
 ```bash
 IDENTITY="Developer ID Application: 你的名字 (TEAMID)"
 
-# Step 1: Sign all native modules (.node files)
+# MLX 编译进 app，只需签名 app bundle 本身
+codesign --force --sign "$IDENTITY" --options runtime --timestamp Klee.app
+```
+
+Phase 2 增加 Node.js + OpenClaw 后需逐个签名：
+
+```bash
+# 1. Sign native modules (.node files)
 find Klee.app/Contents/Resources/openclaw/node_modules -name "*.node" \
   -exec codesign --force --sign "$IDENTITY" --options runtime --timestamp {} \;
 
-# Step 2: Sign all dynamic libraries
+# 2. Sign dynamic libraries
 find Klee.app/Contents/Resources/openclaw/node_modules -name "*.dylib" \
   -exec codesign --force --sign "$IDENTITY" --options runtime --timestamp {} \;
 
-# Step 3: Sign ollama binary
-codesign --force --sign "$IDENTITY" --options runtime --timestamp \
-  Klee.app/Contents/Resources/ollama
-
-# Step 4: Sign node binary (needs extra entitlements for JIT)
+# 3. Sign Node.js binary (needs JIT entitlements)
 codesign --force --sign "$IDENTITY" --options runtime --timestamp \
   --entitlements node.entitlements \
   Klee.app/Contents/Resources/node
 
-# Step 5: Sign the app bundle (last)
-codesign --force --sign "$IDENTITY" --options runtime --timestamp \
-  Klee.app
+# 4. Sign app bundle (last)
+codesign --force --sign "$IDENTITY" --options runtime --timestamp Klee.app
 ```
 
 **Node.js entitlements (node.entitlements):**
@@ -307,19 +422,14 @@ codesign --force --sign "$IDENTITY" --options runtime --timestamp \
 </plist>
 ```
 
-**3. Archive & 公证**
-```
-Product -> Archive
--> Distribute App
--> Direct Distribution
--> Upload to Apple's notarization service (Xcode auto, 1-5 min)
--> Export Notarized App
-```
+### 公证与 DMG 打包
 
-**4. 打包 DMG（DMG 也需要单独公证 + staple）**
 ```bash
-brew install create-dmg
+# Archive & Notarize
+# Product -> Archive -> Distribute App -> Direct Distribution -> Upload
 
+# 打包 DMG
+brew install create-dmg
 create-dmg \
   --volname "Klee" \
   --window-size 600 400 \
@@ -328,130 +438,26 @@ create-dmg \
   "Klee.dmg" \
   "Klee.app"
 
-# Notarize the DMG
+# 公证 DMG
 xcrun notarytool submit Klee.dmg --apple-id "you@email.com" \
   --team-id "TEAMID" --password "@keychain:AC_PASSWORD" --wait
 
-# Staple the notarization ticket to DMG
+# Staple
 xcrun stapler staple Klee.dmg
 ```
 
-**用户体验：** 下载 dmg -> 拖入 Applications -> 首次打开确认弹窗（有签名不会出红色警告）-> 直接使用。
-
 ---
 
-## 八、node_modules 优化
+## 七、自动更新（Sparkle 2.x）
 
-OpenClaw 全量 `npm install` 约 1.4 GB，含大量开发依赖和非必要原生模块。打包前必须优化：
-
-```bash
-# 1. Only install production dependencies
-npm install --omit=dev
-
-# 2. Mark heavy optional dependencies as optional in package.json
-# node-llama-cpp (~600MB) and @napi-rs/canvas (~152MB) are not needed
-# when using Ollama as the inference backend
-# Set them as optionalDependencies and skip with --no-optional
-
-# 3. Clean up test/docs/TypeScript source files
-npx node-prune
-
-# 4. Remove non-darwin-arm64 platform prebuilds
-find node_modules -path "*/prebuilds/linux-*" -exec rm -rf {} +
-find node_modules -path "*/prebuilds/win32-*" -exec rm -rf {} +
-find node_modules -path "*/prebuilds/darwin-x64" -exec rm -rf {} +
-```
-
-**注意：** 原生模块（better-sqlite3 等）有 Node ABI 版本绑定，更新 OpenClaw 版本后需重新签名所有 `.node` 文件。
-
-### 前置验证（在写 Swift 代码之前必须完成）
-
-上述优化方案是理论推演，核心假设——删除 node-llama-cpp 和 @napi-rs/canvas 后 Gateway 仍能正常工作——**必须实际验证**。如果 OpenClaw 代码路径在初始化时硬引用了这两个包，删除后 app 会直接崩溃，200MB 的体积估算也不成立。
-
-**验证步骤：**
-
-```bash
-# 0. Prerequisites: Ollama running locally, Node >= 22 installed
-ollama serve &
-
-# 1. Create a clean test directory
-mkdir -p /tmp/klee-openclaw-test && cd /tmp/klee-openclaw-test
-
-# 2. Install OpenClaw with production deps only
-npm init -y
-npm install openclaw --omit=dev
-
-# 3. Record baseline size
-du -sh node_modules  # Expected: ~800MB-1GB (no devDeps)
-
-# 4. Remove the two heavy optional packages
-rm -rf node_modules/node-llama-cpp
-rm -rf node_modules/@napi-rs/canvas
-# Also remove any dangling references
-npm ls 2>&1 | grep "MISSING" || echo "No missing deps"
-
-# 5. Record optimized size
-du -sh node_modules  # Target: ~200-300MB
-
-# 6. Run platform cleanup
-find node_modules -path "*/prebuilds/linux-*" -exec rm -rf {} + 2>/dev/null
-find node_modules -path "*/prebuilds/win32-*" -exec rm -rf {} + 2>/dev/null
-find node_modules -path "*/prebuilds/darwin-x64" -exec rm -rf {} + 2>/dev/null
-
-# 7. Run node-prune
-npx node-prune
-
-# 8. Record final size
-du -sh node_modules  # This is the real number for App Bundle
-
-# 9. Start OpenClaw Gateway pointing to local Ollama
-OLLAMA_HOST=http://127.0.0.1:11434 npx openclaw gateway
-# Expected: Gateway starts on port 18789
-
-# 10. Smoke test: send a message via WebSocket
-# Use websocat or a simple script to connect to ws://127.0.0.1:18789
-# and send a chat.send command. Verify response comes back.
-```
-
-**判定标准：**
-
-| 检查项 | 通过条件 |
-|--------|---------|
-| Gateway 启动 | 无 require 错误，监听 18789 |
-| 聊天功能 | WebSocket 发消息能收到 LLM 回复 |
-| node_modules 体积 | 优化后 ≤ 300MB |
-| 无运行时报错 | 日志中无 MODULE_NOT_FOUND 错误 |
-
-**如果验证失败：**
-- 如果 Gateway 启动时报 `Cannot find module 'node-llama-cpp'`：尝试创建一个空的 stub 模块（`mkdir -p node_modules/node-llama-cpp && echo "module.exports = {}" > node_modules/node-llama-cpp/index.js`）
-- 如果 stub 也不行：保留 node-llama-cpp，放弃该项优化，预期体积上调至 ~400-500MB
-- 如果 @napi-rs/canvas 被硬引用：同理 stub 或保留
-- 最终体积超过 500MB：仍可接受（Cursor 500MB），但需要更重视 Sparkle delta 更新
-
----
-
-## 九、自动更新
-
-### 为什么选 Sparkle 2.x
-
-非 App Store 分发的 macOS app 没有系统级自动更新。Sparkle 是事实标准（Firefox、VLC、iTerm2、Figma 都用），2.x 版本完全支持 Swift/SPM。
-
-其他方案不可行：
-- 自己写更新逻辑：需要处理下载、校验、替换、权限提升，工作量大且容易出安全漏洞
-- Electron autoUpdater：已弃用 Electron
-- macOS Installer pkg：体验差，不适合拖拽安装的 app
+非 App Store 分发的 macOS app 没有系统级自动更新。Sparkle 是事实标准（Firefox、VLC、iTerm2、Figma 都用）。
 
 ### 集成方式
 
-**SPM 添加依赖：**
 ```swift
-// Package.swift or Xcode: File > Add Package Dependencies
-// https://github.com/sparkle-project/Sparkle
-// Version: 2.x (Up to Next Major)
-```
+// Xcode: File > Add Package Dependencies
+// https://github.com/sparkle-project/Sparkle (2.x)
 
-**SwiftUI 集成：**
-```swift
 import Sparkle
 
 @main
@@ -477,25 +483,10 @@ struct KleeApp: App {
         }
     }
 }
-
-// Menu item view
-struct CheckForUpdatesView: View {
-    @ObservedObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
-    let updater: SPUUpdater
-
-    init(updater: SPUUpdater) {
-        self.updater = updater
-        self.checkForUpdatesViewModel = CheckForUpdatesViewModel(updater: updater)
-    }
-
-    var body: some View {
-        Button("Check for Updates…", action: updater.checkForUpdates)
-            .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
-    }
-}
 ```
 
-**Info.plist 配置：**
+### Info.plist 配置
+
 ```xml
 <key>SUFeedURL</key>
 <string>https://klee.app/appcast.xml</string>
@@ -503,139 +494,138 @@ struct CheckForUpdatesView: View {
 <key>SUPublicEDKey</key>
 <string>YOUR_ED25519_PUBLIC_KEY</string>
 
-<!-- Auto-check on launch (user can disable in Settings) -->
 <key>SUEnableAutomaticChecks</key>
 <true/>
 
-<!-- Interval in seconds (default 24h = 86400) -->
 <key>SUScheduledCheckInterval</key>
 <integer>86400</integer>
 ```
 
-### Delta 更新（关键）
+### Delta 更新
 
-对于 400-650MB 的 app，全量更新体验很差。Sparkle 的 delta 更新只下载版本间的差异：
-
-**典型场景：**
+Phase 1 体积小（~70MB），全量更新也可接受。Phase 2 体积增大后 delta 更新价值凸显：
 
 | 更新内容 | 全量下载 | Delta 下载 |
 |---------|---------|-----------|
-| 只改了 SwiftUI 代码 | ~400MB | **~5-10MB** |
-| 更新了 OpenClaw 版本 | ~400MB | **~50-100MB** |
-| 更新了 Ollama binary | ~400MB | **~30-50MB** |
-| 全部组件都更新 | ~400MB | ~300MB（此时接近全量） |
+| 只改了 SwiftUI 代码 | ~350MB | **~5-10MB** |
+| 更新了 OpenClaw 版本 | ~350MB | **~50-100MB** |
+| MLX 引擎更新 | ~350MB | **~30MB** |
 
-**生成 delta 更新包：**
 ```bash
-# Sparkle ships with generate_appcast tool
-# Place versioned .zip archives in a directory:
-#   releases/
-#     Klee-1.0.0.zip
-#     Klee-1.0.1.zip
-#     Klee-1.1.0.zip
-
-# generate_appcast auto-creates delta patches between consecutive versions
+# 生成 delta 更新包
 ./Sparkle/bin/generate_appcast releases/
-
-# Output:
-#   releases/
-#     Klee-1.0.0.zip
-#     Klee-1.0.1.zip
-#     Klee-1.0.0-1.0.1.delta    <- auto-generated
-#     Klee-1.1.0.zip
-#     Klee-1.0.1-1.1.0.delta    <- auto-generated
-#     appcast.xml                <- auto-generated feed
 ```
-
-Sparkle 客户端会优先尝试下载 delta，失败时 fallback 到全量。
 
 ### 发布服务器
 
-不需要专门的后端，只需要静态文件托管：
+- **GitHub Releases**：免费，适合早期阶段
+- **CDN（CloudFlare R2 / S3）**：适合用户量大时
 
-- **GitHub Releases**：免费，适合开源/早期阶段。把 `.zip` + `.delta` + `appcast.xml` 作为 release assets
-- **CDN（CloudFlare R2 / S3）**：适合用户量大时。R2 免出站流量费
+---
 
-**发版流程：**
-1. Xcode Archive → Export Notarized App
-2. `zip -ry Klee-x.y.z.zip Klee.app`
-3. 放入 releases 目录，运行 `generate_appcast`
-4. 上传 `.zip` + `.delta` + `appcast.xml` 到托管服务
-5. 用户 app 自动检测到新版本，提示更新
+## 八、竞品分析
 
-### EdDSA 密钥管理
+| 产品 | 框架 | 推理引擎 | 嵌入方式 | 零配置 | 开源 |
+|------|------|---------|---------|--------|------|
+| **Klee** | **SwiftUI 原生** | **MLX** | **SPM 编译链接** | **是** | 是 |
+| LM Studio | Electron | llama.cpp + MLX | 内嵌 | 是 | 否 |
+| Jan.ai | Electron | Cortex.cpp (llama.cpp) | 内嵌子进程 | 是 | 是 |
+| GPT4All | Qt/QML | llama.cpp | 编译链接 | 是 | 是 |
+| Enchanted | SwiftUI | 无（Ollama 客户端） | 不嵌入 | **否** | 是 |
+| Ollama App | Go + Web | 自研引擎 | 独立应用 | 是 | 是 |
+
+**Klee 的独特定位：唯一使用 MLX + SwiftUI 原生的零配置本地 LLM 应用。**
+
+### 差异化优势
+
+1. **性能**：MLX 在 Apple Silicon 上比所有竞品的 llama.cpp 快 21%-87%
+2. **体积**：Phase 1 仅 ~70MB，竞品普遍 300MB+
+3. **内存**：无 Electron/Qt 运行时开销，更多内存留给模型
+4. **原生体验**：SwiftUI 深度整合 macOS（通知、Spotlight、Share Extension）
+5. **中文优化**：界面、onboarding、模型推荐全中文
+
+---
+
+## 九、战略优势：借助开源生态成长
+
+**做交付层，不做基础层。**
+
+| 上游项目 | Klee 受益 |
+|---|---|
+| MLX Swift 更新 | 推理性能持续提升，新模型架构自动支持 |
+| mlx-community 模型转换 | 用户可选模型越来越多 |
+| Apple Silicon 硬件迭代 | M5 Neural Accelerators 额外加速 19-27% |
+| OpenClaw 新 Skill（Phase 2） | Agent 能力不断扩展 |
+| 开源模型进步 | 相同硬件效果越来越好 |
+| Apple Foundation Models（macOS 26+） | 可作为轻量任务的补充引擎 |
+
+---
+
+## 十、下一步行动
+
+### Phase 1：本地聊天（当前重点）
+
+**目标**：用户下载 Klee → 选模型 → 自动下载 → 开始聊天
+
+- [ ] 重构现有代码：移除 Ollama ProcessManager，引入 mlx-swift-lm SPM 依赖
+- [ ] 实现 LLMService：模型加载、流式推理、模型切换
+- [ ] 实现 ModelManager：推荐模型列表、下载进度、缓存管理、按内存过滤
+- [ ] 重构 ChatView：对接 MLX 流式输出（替代 Ollama REST API）
+- [ ] 重构 ModelManagerView：展示 HuggingFace 模型列表、下载/删除
+- [ ] Onboarding 流程：检测内存 → 推荐模型 → 引导下载 → 首次对话
+- [ ] 集成 Sparkle 2.x 自动更新
+- [ ] Developer ID 签名 + Notarization + DMG 打包
+
+### Phase 2：AI Agent（OpenClaw 集成）
+
+**前置验证**：确认删除 node-llama-cpp / @napi-rs/canvas 后 Gateway 能正常启动
+
+- [ ] 打包 Node.js 22 binary + OpenClaw node_modules
+- [ ] 实现 OpenClawManager：进程管理 + Watchdog
+- [ ] WebSocket 通信层：URLSessionWebSocketTask 接入 Gateway
+- [ ] Agent UI：工具调用展示、文件操作确认、Shell 执行审批
+- [ ] node_modules 优化打包脚本
+- [ ] 更新签名流程（Node.js entitlements）
+
+### Phase 3：深度整合
+
+- [ ] macOS 系统整合：Spotlight、Share Extension、全局快捷键
+- [ ] Apple Foundation Models 集成（macOS 26+，轻量任务分流）
+- [ ] 多模态支持（VLM，图片输入）
+- [ ] 对话历史持久化（SwiftData）
+- [ ] 垂直场景定制（开发者 / 内容创作者模式）
+
+---
+
+## 附录 A：MLX 模型格式与转换
+
+大部分主流模型在 mlx-community 已有现成的 MLX 格式版本。如需自行转换：
 
 ```bash
-# Generate key pair (only once, keep private key safe!)
-./Sparkle/bin/generate_keys
+pip install mlx-lm
 
-# Output:
-#   Private key saved to Keychain (item: "Sparkle EdDSA")
-#   Public key: <base64 string>  <- put this in Info.plist as SUPublicEDKey
-
-# Export private key for CI (store as secret)
-./Sparkle/bin/generate_keys --export-private-key
+# 将任何 HuggingFace 模型转为 MLX 格式 + 量化
+mlx_lm.convert \
+  --hf-path Qwen/Qwen3-8B \
+  --mlx-path ./Qwen3-8B-4bit \
+  --quantize --q-bits 4
 ```
 
-**安全要点：**
-- 私钥存 macOS Keychain，CI 环境用 secret 注入
-- 公钥编译进 app（Info.plist），客户端用它验证更新包签名
-- 即使有人劫持了 CDN，没有私钥也无法推送恶意更新
+## 附录 B：参考项目
 
----
+| 项目 | 说明 |
+|------|------|
+| [ml-explore/mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) | Apple 官方示例，含 LLMEval、MLXChatExample |
+| [preternatural-explore/mlx-swift-chat](https://github.com/preternatural-explore/mlx-swift-chat) | 完整 SwiftUI 聊天 App |
+| [Trans-N-ai/swama](https://github.com/Trans-N-ai/swama) | 纯 Swift MLX 推理引擎 + OpenAI 兼容 API |
+| [gluonfield/enchanted](https://github.com/gluonfield/enchanted) | SwiftUI 多平台 Ollama 客户端（UI 参考） |
 
-## 十、战略优势：借助开源生态成长
+## 附录 C：调研来源
 
-这套方案的核心战略是：**做交付层，不做基础层**。
-
-| 上游项目 | 你的受益 |
-|---|---|
-| Ollama 推理优化 | 同等硬件速度持续提升，Metal 加速自动获得 |
-| Ollama 新模型支持 | 用户可选模型越来越多 |
-| OpenClaw 新 Skill | agent 能力不断扩展，ClawHub 已有 5700+ skills |
-| OpenClaw 稳定性修复 | app 稳定性自动提升 |
-| 开源模型进步 | 相同硬件效果越来越好，用户感知 app 越来越聪明 |
-
----
-
-## 十一、竞争风险与护城河
-
-**主要风险：** OpenClaw 官方已发布 macOS Companion App Beta（menubar app，macOS 14+，Universal Binary），功能包括聊天面板、全局快捷键、原生通知。差异化空间被压缩。
-
-**Klee 的差异化：**
-
-| 能力 | Companion App | Klee |
-|------|--------------|------|
-| 内置 Ollama | 需自行安装 | 开箱即用 |
-| 内置 OpenClaw | 需自行安装 Node.js + npm | 开箱即用 |
-| 中文 onboarding | 无 | 模型推荐、内存适配 |
-| 安装门槛 | 需终端操作 | 拖入 Applications 即可 |
-| 目标用户 | 开发者 | 普通用户也能用 |
-
-**真正的护城河：**
-- **中文用户体验**：界面、onboarding、文档全中文，懂国内用户习惯
-- **更低上手门槛**：比官方更精心设计的引导流程
-- **垂直场景深耕**：针对特定用户群（开发者/内容创作者）的定制化
-
----
-
-## 十二、下一步行动
-
-### Phase 0：验证（阻塞后续所有工作）
-- [ ] **执行第八章「前置验证」**：确认删除 node-llama-cpp / @napi-rs/canvas 后 Gateway 能正常启动和聊天
-- [ ] 记录真实的 node_modules 优化后体积，更新本文档的体积预估
-
-### Phase 1：项目搭建
-- [ ] 搭建 SwiftUI 项目基础结构
-- [ ] 实现 Ollama 进程管理（端口隔离 + 复用检测 + watchdog）
-- [ ] 打通 OpenClaw 进程启动与配置自动注入
-- [ ] 用 URLSessionWebSocketTask 接入 OpenClaw Gateway（端口 18789）
-
-### Phase 2：功能完善
-- [ ] 设计 onboarding 流程（模型选择、首次配置）
-- [ ] node_modules 优化打包脚本（基于 Phase 0 验证结果）
-- [ ] 集成 Sparkle 2.x 自动更新
-
-### Phase 3：分发
-- [ ] Developer ID 签名（逐个签名 + entitlements）+ Notarization 流程验证
-- [ ] 打包 dmg（含 dmg 公证 + staple），内测分发
+- [MLX Swift GitHub](https://github.com/ml-explore/mlx-swift) / [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm)
+- [WWDC 2025 Session 298 - Explore LLM on Apple Silicon with MLX](https://developer.apple.com/videos/play/wwdc2025/298/)
+- [WWDC 2025 Session 315 - Get started with MLX](https://developer.apple.com/videos/play/wwdc2025/315/)
+- [MLX vs llama.cpp Benchmark Paper (arXiv:2511.05502)](https://arxiv.org/abs/2511.05502)
+- [Ollama v0.17.7 Release Notes](https://github.com/ollama/ollama/releases)
+- [Apple Foundation Models Framework](https://developer.apple.com/documentation/FoundationModels)
+- [mlx-community on HuggingFace](https://huggingface.co/mlx-community)
