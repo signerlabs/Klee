@@ -2,8 +2,7 @@
 //  KleeApp.swift
 //  Klee
 //
-//  App entry point. Injects LLMService and ModelManager as environment objects.
-//  Phase 1 refactor: removed ProcessManager and AppDelegate (subprocess management no longer needed).
+//  App entry point. Injects LLMService, ModelManager, DownloadManager, and ChatStore as environment objects.
 //
 
 import SwiftUI
@@ -13,6 +12,7 @@ struct KleeApp: App {
     @State private var llmService = LLMService()
     @State private var modelManager = ModelManager()
     @State private var downloadManager = DownloadManager()
+    @State private var chatStore = ChatStore()
 
     init() {
         // HuggingFace mirror acceleration (uncomment for users in China)
@@ -25,6 +25,7 @@ struct KleeApp: App {
                 .environment(llmService)
                 .environment(modelManager)
                 .environment(downloadManager)
+                .environment(chatStore)
         }
         .defaultSize(width: 960, height: 640)
         .commands {

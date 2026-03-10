@@ -3,8 +3,8 @@
 //  Klee
 //
 //  Chat interface: streaming AI conversation powered by MLX local inference.
-//  Uses flip technique (inspired by ShipSwift SWMessageList) for the message list,
-//  MarkdownTextView for AI reply rendering, and ThinkingIndicator for waiting state.
+//  Messages are stored in ChatStore (JSON persistence) instead of local @State.
+//  Uses flip technique for the message list, MarkdownTextView for AI reply rendering.
 //
 
 import SwiftUI
@@ -12,17 +12,39 @@ import SwiftUI
 // MARK: - Flip Modifier
 
 /// Flips a view to achieve a bottom-anchored chat list effect.
-///
-/// How it works:
-/// 1. Flip the entire List -> top becomes bottom
-/// 2. Flip each child item -> content direction restored to normal
-/// 3. Reverse the message array -> newest messages appear at the bottom
-///
-/// Reference: https://www.swiftwithvincent.com/blog/building-the-inverted-scroll-of-a-messaging-app
 private extension View {
     func flipped() -> some View {
         rotationEffect(.radians(.pi))
             .scaleEffect(x: -1, y: 1, anchor: .center)
+    }
+}
+
+// MARK: - Thinking Block (collapsible, default expanded)
+
+/// Renders <think> content in a distinct styled block.
+/// Displayed inline with a subtle background and label. Max 3 lines with "show more" via scroll.
+/// Note: Interactive gestures (tap/toggle) don't work inside the flipped List,
+/// so the block is non-collapsible.
+private struct ThinkingBlock: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Header
+            HStack(spacing: 4) {
+                Image(systemName: "brain")
+                Text("Thinking")
+            }
+
+            // Content (compact, secondary color)
+            Text(text)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -31,10 +53,20 @@ private extension View {
 struct ChatView: View {
     @Environment(LLMService.self) var llmService
     @Environment(ModelManager.self) var modelManager
+    @Environment(ChatStore.self) var chatStore
     @State private var inputText = ""
-    @State private var messages: [ChatMessage] = []
     @State private var isStreaming = false
     @FocusState private var isInputFocused: Bool
+
+    /// Messages for the current conversation (convenience)
+    private var messages: [ChatMessage] {
+        chatStore.currentConversation?.messages ?? []
+    }
+
+    /// The ID of the current conversation
+    private var conversationId: UUID? {
+        chatStore.selectedConversationId
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,15 +79,18 @@ struct ChatView: View {
             inputBar
         }
         .frame(minWidth: 400, minHeight: 300)
+        .onChange(of: chatStore.selectedConversationId) {
+            // Reset streaming state when switching conversations
+            isStreaming = false
+            inputText = ""
+        }
     }
 
     // MARK: - Message List (flip technique)
 
-    /// Uses List + flip technique to solve the CPU 100% issue with ScrollView + LazyVStack during streaming updates.
-    /// Flip principle: flip the entire List to start from bottom, then flip each child to restore content direction.
     private var messageList: some View {
         List {
-            // Show empty state when no messages (needs flip to restore direction)
+            // Empty state
             if messages.isEmpty {
                 emptyState
                     .flipped()
@@ -64,7 +99,7 @@ struct ChatView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
             }
 
-            // Show ThinkingIndicator when streaming and the latest assistant message is empty
+            // Thinking indicator when streaming and assistant message is empty
             if isStreaming, let last = messages.last, last.role == .assistant, last.content.isEmpty {
                 thinkingBubble
                     .flipped()
@@ -75,7 +110,6 @@ struct ChatView: View {
 
             // Reverse array so newest messages appear at bottom after flip
             ForEach(messages.reversed()) { message in
-                // Skip empty assistant placeholder messages (displayed by ThinkingIndicator instead)
                 if !(message.role == .assistant && message.content.isEmpty && isStreaming) {
                     messageBubble(for: message)
                         .flipped()
@@ -132,7 +166,6 @@ struct ChatView: View {
     private func messageBubble(for message: ChatMessage) -> some View {
         switch message.role {
         case .user:
-            // User message: right-aligned, accent color background
             HStack {
                 Spacer(minLength: 60)
                 Text(message.content)
@@ -144,10 +177,8 @@ struct ChatView: View {
             }
 
         case .assistant:
-            // AI message: left-aligned, light gray background, Markdown rendering
             HStack {
-                MarkdownTextView(text: message.content)
-                    .textSelection(.enabled)
+                assistantBubbleContent(message.content)
                     .padding(10)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -155,7 +186,6 @@ struct ChatView: View {
             }
 
         case .system:
-            // System message: centered, small font
             HStack {
                 Spacer()
                 Text(message.content)
@@ -168,16 +198,84 @@ struct ChatView: View {
         }
     }
 
+    // MARK: - Assistant Bubble Content (with think block support)
+
+    /// Parses <think>...</think> blocks from assistant content and renders them
+    /// as collapsible DisclosureGroups with secondary styling.
+    @ViewBuilder
+    private func assistantBubbleContent(_ content: String) -> some View {
+        let segments = parseThinkSegments(content)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .text(let text):
+                    MarkdownTextView(text: text)
+                        .textSelection(.enabled)
+                case .think(let text):
+                    ThinkingBlock(text: text)
+                }
+            }
+        }
+    }
+
+    /// Segment type for parsed assistant content
+    private enum ContentSegment {
+        case text(String)
+        case think(String)
+    }
+
+    /// Parse content into alternating text and think segments
+    private func parseThinkSegments(_ content: String) -> [ContentSegment] {
+        var segments: [ContentSegment] = []
+        var remaining = content
+
+        while !remaining.isEmpty {
+            if let startRange = remaining.range(of: "<think>") {
+                // Text before <think>
+                let before = String(remaining[..<startRange.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !before.isEmpty {
+                    segments.append(.text(before))
+                }
+
+                let afterStart = String(remaining[startRange.upperBound...])
+                if let endRange = afterStart.range(of: "</think>") {
+                    // Complete think block
+                    let thinkContent = String(afterStart[..<endRange.lowerBound])
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !thinkContent.isEmpty {
+                        segments.append(.think(thinkContent))
+                    }
+                    remaining = String(afterStart[endRange.upperBound...])
+                } else {
+                    // Unclosed think block (still streaming) — show what we have
+                    let thinkContent = afterStart.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !thinkContent.isEmpty {
+                        segments.append(.think(thinkContent))
+                    }
+                    remaining = ""
+                }
+            } else {
+                // No more think tags
+                let text = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    segments.append(.text(text))
+                }
+                remaining = ""
+            }
+        }
+
+        return segments
+    }
+
     // MARK: - Input Bar
 
-    /// Whether the input field contains valid text
     private var hasText: Bool {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var inputBar: some View {
         VStack(spacing: 8) {
-            // Text input area
             TextField("Type a message...", text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...8)
@@ -185,23 +283,14 @@ struct ChatView: View {
                 .disabled(isStreaming)
                 .onKeyPress(.return, phases: .down) { event in
                     if event.modifiers.contains(.shift) {
-                        return .ignored // Shift+Return for newline
+                        return .ignored
                     }
                     sendCurrentMessage()
                     return .handled
                 }
 
-            // Bottom toolbar: hint text + buttons
             HStack(spacing: 12) {
-                // Hint text
-                if isStreaming {
-                    HStack(spacing: 4) {
-                        ThinkingIndicator(dotSize: 4, dotColor: .secondary)
-                        Text("Generating...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if llmService.state == .loading {
+                if llmService.state == .loading {
                     Text("Loading model...")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -213,9 +302,7 @@ struct ChatView: View {
 
                 Spacer()
 
-                // Action buttons
                 if isStreaming {
-                    // Stop generation
                     Button {
                         llmService.stopGeneration()
                         isStreaming = false
@@ -227,7 +314,6 @@ struct ChatView: View {
                     .buttonStyle(.plain)
                     .help("Stop generating")
                 } else {
-                    // Send button
                     Button(action: sendCurrentMessage) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 24))
@@ -253,104 +339,125 @@ struct ChatView: View {
     private func sendCurrentMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isStreaming, llmService.state == .ready else { return }
+        guard let convId = conversationId else { return }
         inputText = ""
 
-        // Add user message
-        messages.append(ChatMessage(role: .user, content: text))
+        // Check if this is the first user message (for title generation)
+        let isFirstMessage = messages.isEmpty
 
-        // Create empty assistant message placeholder (for streaming fill)
+        // Add user message
+        let userMsg = ChatMessage(role: .user, content: text)
+        chatStore.appendMessage(userMsg, to: convId)
+
+        // Create empty assistant message placeholder
         let assistantMsg = ChatMessage(role: .assistant, content: "")
-        messages.append(assistantMsg)
+        chatStore.appendMessage(assistantMsg, to: convId)
         let assistantID = assistantMsg.id
 
         isStreaming = true
 
         Task {
-            // Pass full conversation history (excluding empty assistant placeholder)
+            // Build history for API (exclude empty assistant placeholder)
             let historyForAPI = messages
                 .filter { $0.role != .system }
-                .dropLast() // Remove empty assistant placeholder
+                .dropLast()
                 .map { $0 }
 
             let stream = llmService.chat(messages: Array(historyForAPI))
 
-            // State for filtering <think>...</think> tags
-            var insideThink = false
-            var buffer = ""
+            // Stream tokens directly (keep <think> tags for rendering layer to handle)
+            var accumulatedContent = ""
 
             for await token in stream {
-                buffer += token
-
-                // Process <think> tags: incrementally consume displayable content from buffer
-                while !buffer.isEmpty {
-                    if insideThink {
-                        // Inside think block, looking for </think>
-                        if let endRange = buffer.range(of: "</think>") {
-                            // Discard thinking content, skip past </think>
-                            buffer = String(buffer[endRange.upperBound...])
-                            insideThink = false
-                        } else {
-                            // Haven't received complete </think> yet, keep buffer and wait for more tokens
-                            break
-                        }
-                    } else {
-                        // Not inside think block, looking for <think>
-                        if let startRange = buffer.range(of: "<think>") {
-                            // Output content before <think>
-                            let before = String(buffer[..<startRange.lowerBound])
-                            if !before.isEmpty,
-                               let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                                messages[idx].content += before
-                            }
-                            buffer = String(buffer[startRange.upperBound...])
-                            insideThink = true
-                        } else if buffer.contains("<") {
-                            // Possibly incomplete <think> tag, output the safe part before <
-                            if let ltIndex = buffer.firstIndex(of: "<") {
-                                let safe = String(buffer[..<ltIndex])
-                                if !safe.isEmpty,
-                                   let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                                    messages[idx].content += safe
-                                }
-                                buffer = String(buffer[ltIndex...])
-                            }
-                            break
-                        } else {
-                            // No tags found, output everything
-                            if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                                messages[idx].content += buffer
-                            }
-                            buffer = ""
-                        }
-                    }
-                }
+                accumulatedContent += token
+                chatStore.updateMessage(id: assistantID, in: convId, content: accumulatedContent)
             }
 
-            // After stream ends, output remaining non-thinking content in buffer
-            if !insideThink && !buffer.isEmpty {
-                if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                    messages[idx].content += buffer
-                }
-            }
+            // Trim whitespace
+            let trimmed = accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines)
+            chatStore.updateMessage(id: assistantID, in: convId, content: trimmed)
 
-            // Trim leading whitespace (may remain after think tag filtering)
-            if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                messages[idx].content = messages[idx].content
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+            // If assistant message is still empty, remove it
+            if trimmed.isEmpty {
+                chatStore.removeMessage(id: assistantID, from: convId)
 
-            // If assistant message is still empty (generation failed), remove placeholder
-            if let idx = messages.firstIndex(where: { $0.id == assistantID }),
-               messages[idx].content.isEmpty {
-                messages.remove(at: idx)
-
-                // If there's an error message, display it as a system message
                 if let error = llmService.error {
-                    messages.append(ChatMessage(role: .system, content: "Error: \(error)"))
+                    let errMsg = ChatMessage(role: .system, content: "Error: \(error)")
+                    chatStore.appendMessage(errMsg, to: convId)
                 }
             }
+
+            // Save conversation after streaming completes
+            chatStore.saveConversation(id: convId)
 
             isStreaming = false
+
+            // Generate AI title after streaming completes (LLM is now free)
+            if isFirstMessage {
+                generateTitle(for: convId, basedOn: text)
+            }
+        }
+    }
+
+    // MARK: - AI Title Generation
+
+    /// Generate a short title for the conversation using the LLM.
+    /// Runs asynchronously and does not block the chat flow.
+    private func generateTitle(for conversationId: UUID, basedOn userMessage: String) {
+        Task.detached { @MainActor [llmService, chatStore] in
+            // Only generate if the conversation still has the default title
+            guard let conv = chatStore.conversations.first(where: { $0.id == conversationId }),
+                  conv.hasDefaultTitle else { return }
+
+            // Check if LLM is available
+            guard llmService.state.isReady else {
+                // Fallback: use first 20 characters of user message
+                let fallback = String(userMessage.prefix(20))
+                chatStore.updateTitle(fallback, for: conversationId)
+                return
+            }
+
+            // Build a title-generation prompt (explicit: no thinking, no quotes, short)
+            let prompt = "Generate a very short title (max 5 words) for this chat message. Reply with ONLY the title, nothing else. No thinking, no quotes, no explanation.\n\nMessage: \(userMessage)"
+            let titleMessages = [ChatMessage(role: .user, content: prompt)]
+            let stream = llmService.chat(messages: titleMessages)
+
+            var rawTitle = ""
+            for await token in stream {
+                rawTitle += token
+            }
+
+            // Strip <think>...</think> tags from response
+            var title = rawTitle
+            while let startRange = title.range(of: "<think>") {
+                if let endRange = title.range(of: "</think>") {
+                    title.removeSubrange(startRange.lowerBound..<endRange.upperBound)
+                } else {
+                    // Incomplete think tag, remove from <think> to end
+                    title.removeSubrange(startRange.lowerBound..<title.endIndex)
+                }
+            }
+
+            // Clean up
+            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Remove surrounding quotes if present
+            if (title.hasPrefix("\"") && title.hasSuffix("\"")) ||
+               (title.hasPrefix("'") && title.hasSuffix("'")) {
+                title = String(title.dropFirst().dropLast())
+            }
+            // Take only the first line
+            if let firstLine = title.components(separatedBy: .newlines).first(where: { !$0.isEmpty }) {
+                title = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            // Limit length and apply
+            if title.isEmpty {
+                title = String(userMessage.prefix(20))
+            } else if title.count > 40 {
+                title = String(title.prefix(40))
+            }
+
+            chatStore.updateTitle(title, for: conversationId)
         }
     }
 }
@@ -361,4 +468,5 @@ struct ChatView: View {
     ChatView()
         .environment(LLMService())
         .environment(ModelManager())
+        .environment(ChatStore())
 }

@@ -57,13 +57,13 @@ struct ModelInfo: Identifiable, Equatable, Hashable {
 // MARK: - Chat Message
 
 /// A single message in the conversation
-struct ChatMessage: Identifiable, Equatable {
+struct ChatMessage: Identifiable, Equatable, Codable {
     let id: UUID
     let role: Role
     var content: String
     let timestamp: Date
 
-    enum Role: String, Equatable {
+    enum Role: String, Equatable, Codable {
         case user
         case assistant
         case system
