@@ -131,6 +131,28 @@ class ChatStore {
         save(conversations[idx])
     }
 
+    /// Remove all empty conversations (no messages + default title), ensuring at least one remains.
+    /// Returns the IDs of removed conversations.
+    @discardableResult
+    func removeEmptyConversations(excluding excludedId: UUID? = nil) -> [UUID] {
+        let emptyIds = conversations
+            .filter { $0.messages.isEmpty && $0.hasDefaultTitle && $0.id != excludedId }
+            .map(\.id)
+
+        for id in emptyIds {
+            conversations.removeAll { $0.id == id }
+            let fileURL = chatsDirectory.appendingPathComponent("\(id.uuidString).json")
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+
+        // If we deleted the selected conversation, re-select
+        if let selected = selectedConversationId, emptyIds.contains(selected) {
+            selectedConversationId = conversations.first?.id
+        }
+
+        return emptyIds
+    }
+
     /// Save the current state of a conversation to disk
     func saveConversation(id: UUID) {
         guard let conversation = conversations.first(where: { $0.id == id }) else { return }

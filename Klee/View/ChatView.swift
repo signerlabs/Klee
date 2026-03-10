@@ -46,12 +46,31 @@ private struct ThinkingBlock: View {
 
 struct ChatView: View {
     @Environment(LLMService.self) var llmService
+    @Environment(ModelManager.self) var modelManager
     @Environment(ChatStore.self) var chatStore
+    @Environment(\.openSettings) private var openSettings
     @State private var viewModel = ChatViewModel()
     @FocusState private var isInputFocused: Bool
 
+    /// Whether the user has no downloaded models at all
+    private var needsModelDownload: Bool {
+        !modelManager.availableModels.isEmpty
+            && modelManager.cachedModelIds.isEmpty
+            && llmService.state == .idle
+    }
+
+    /// Extract error message from LLMState if in error state
+    private var errorMessage: String? {
+        if case .error(let msg) = llmService.state { return msg }
+        return nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            // Inline error banner when model loading fails
+            if let errorMessage {
+                errorBanner(message: errorMessage)
+            }
             messageList
             Divider()
             inputBar
@@ -104,9 +123,46 @@ struct ChatView: View {
         .flipped()
     }
 
+    // MARK: - Error Banner
+
+    /// Inline error banner displayed at the top of the chat area
+    private func errorBanner(message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.white)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+            Spacer()
+            Button("Open Settings") {
+                openSettings()
+            }
+            .buttonStyle(.bordered)
+            .tint(.white)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.red.opacity(0.85))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
     // MARK: - Empty State
 
+    @ViewBuilder
     private var emptyState: some View {
+        if needsModelDownload {
+            onboardingState
+        } else {
+            defaultEmptyState
+        }
+    }
+
+    /// Default empty chat placeholder
+    private var defaultEmptyState: some View {
         VStack(spacing: 12) {
             Spacer()
             Image(systemName: "bubble.left.and.bubble.right")
@@ -119,6 +175,35 @@ struct ChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.top, 80)
+    }
+
+    // MARK: - Onboarding State (first launch, no models downloaded)
+
+    private var onboardingState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text("Welcome to Klee")
+                .font(.title3)
+                .fontWeight(.semibold)
+            Text("Download a model to start chatting locally.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                openSettings()
+            } label: {
+                Label("Download a Model", systemImage: "arrow.down.to.line")
+            }
+            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 60)
     }
 
     // MARK: - Thinking Bubble

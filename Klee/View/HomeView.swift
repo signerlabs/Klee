@@ -15,6 +15,11 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var isNewChatHovering = false
 
+    // Rename alert state
+    @State private var isRenamingConversation = false
+    @State private var renamingConversationId: UUID?
+    @State private var renameText = ""
+
     var body: some View {
         @Bindable var store = chatStore
 
@@ -30,6 +35,7 @@ struct HomeView: View {
                 }
             }
             .frame(minWidth: 400, idealWidth: 600, maxWidth: 800)
+            .environment(\.openSettings, OpenSettingsAction { showSettings = true })
         }
         .navigationTitle("")
         .task {
@@ -38,6 +44,9 @@ struct HomeView: View {
                modelManager.isCached(lastModelId) {
                 await llmService.loadModel(id: lastModelId)
             }
+
+            // Clean up empty conversations from previous sessions
+            chatStore.removeEmptyConversations()
 
             // Ensure at least one conversation exists
             if chatStore.conversations.isEmpty {
@@ -65,6 +74,8 @@ struct HomeView: View {
                     .font(.headline)
                 Spacer()
                 Button {
+                    // Remove current empty conversation before creating a new one
+                    chatStore.removeEmptyConversations()
                     chatStore.createConversation()
                 } label: {
                     Image(systemName: "square.and.pencil")
@@ -91,6 +102,16 @@ struct HomeView: View {
                         .lineLimit(1)
                         .tag(conversation.id)
                         .contextMenu {
+                            Button {
+                                renameText = conversation.title
+                                renamingConversationId = conversation.id
+                                isRenamingConversation = true
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+
+                            Divider()
+
                             Button(role: .destructive) {
                                 chatStore.deleteConversation(id: conversation.id)
                             } label: {
@@ -100,6 +121,24 @@ struct HomeView: View {
                 }
             }
             .listStyle(.sidebar)
+            .onChange(of: chatStore.selectedConversationId) { oldId, newId in
+                // When switching conversations, remove the old one if it was empty
+                guard let old = oldId, old != newId else { return }
+                if let conv = chatStore.conversations.first(where: { $0.id == old }),
+                   conv.messages.isEmpty, conv.hasDefaultTitle {
+                    chatStore.deleteConversation(id: old)
+                }
+            }
+            .alert("Rename Conversation", isPresented: $isRenamingConversation) {
+                TextField("Name", text: $renameText)
+                Button("Cancel", role: .cancel) {}
+                Button("Rename") {
+                    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let id = renamingConversationId, !trimmed.isEmpty {
+                        chatStore.updateTitle(trimmed, for: id)
+                    }
+                }
+            }
 
             Divider()
 
