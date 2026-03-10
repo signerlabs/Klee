@@ -78,7 +78,6 @@ struct ChatView: View {
             // Input bar
             inputBar
         }
-        .frame(minWidth: 400, minHeight: 300)
         .onChange(of: chatStore.selectedConversationId) {
             // Reset streaming state when switching conversations
             isStreaming = false
@@ -211,6 +210,7 @@ struct ChatView: View {
                 case .text(let text):
                     MarkdownTextView(text: text)
                         .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 case .think(let text):
                     ThinkingBlock(text: text)
                 }

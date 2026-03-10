@@ -1,5 +1,5 @@
 //
-//  ContentView.swift
+//  HomeView.swift
 //  Klee
 //
 //  Main container view: NavigationSplitView layout.
@@ -8,11 +8,12 @@
 
 import SwiftUI
 
-struct ContentView: View {
+struct HomeView: View {
     @Environment(LLMService.self) var llmService
     @Environment(ModelManager.self) var modelManager
     @Environment(ChatStore.self) var chatStore
     @State private var showSettings = false
+    @State private var isNewChatHovering = false
 
     var body: some View {
         @Bindable var store = chatStore
@@ -21,11 +22,14 @@ struct ContentView: View {
             sidebarContent
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
-            if chatStore.selectedConversationId != nil {
-                ChatView()
-            } else {
-                ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a new chat to get started."))
+            Group {
+                if chatStore.selectedConversationId != nil {
+                    ChatView()
+                } else {
+                    ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a new chat to get started."))
+                }
             }
+            .frame(minWidth: 400, idealWidth: 600, maxWidth: 800)
         }
         .navigationTitle("")
         .task {
@@ -54,8 +58,7 @@ struct ContentView: View {
 
     private var sidebarContent: some View {
         @Bindable var store = chatStore
-
-        return VStack(spacing: 0) {
+        return VStack {
             // Header with new chat button
             HStack {
                 Text("Chats")
@@ -65,9 +68,16 @@ struct ContentView: View {
                     chatStore.createConversation()
                 } label: {
                     Image(systemName: "square.and.pencil")
+                        .imageScale(.large)
+                        .padding(4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.primary.opacity(isNewChatHovering ? 0.1 : 0))
+                        )
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help("New Chat")
+                .onHover { isNewChatHovering = $0 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -77,7 +87,8 @@ struct ContentView: View {
             // Conversation list
             List(selection: $store.selectedConversationId) {
                 ForEach(chatStore.conversations) { conversation in
-                    conversationRow(conversation)
+                    Text(conversation.title)
+                        .lineLimit(1)
                         .tag(conversation.id)
                         .contextMenu {
                             Button(role: .destructive) {
@@ -109,21 +120,6 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    // MARK: - Conversation Row
-
-    private func conversationRow(_ conversation: Conversation) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(conversation.title)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(1)
-
-            Text(conversation.updatedAt, style: .relative)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
     }
 
     // MARK: - Status Badge (model name + state)
@@ -178,7 +174,7 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    HomeView()
         .environment(LLMService())
         .environment(ModelManager())
         .environment(DownloadManager())

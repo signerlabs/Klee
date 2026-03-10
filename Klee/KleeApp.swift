@@ -21,7 +21,7 @@ struct KleeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            HomeView()
                 .environment(llmService)
                 .environment(modelManager)
                 .environment(downloadManager)
