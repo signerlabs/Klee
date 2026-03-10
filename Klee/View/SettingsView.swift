@@ -9,42 +9,51 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(ModelManager.self) var modelManager
-    @Environment(LLMService.self) var llmService
-    @Environment(DownloadManager.self) var downloadManager
 
     var body: some View {
         NavigationStack {
             Form {
                 // MARK: - Device Section
                 Section("Device") {
-                    LabeledContent("Chip", value: chipName)
-                    LabeledContent("Memory", value: "\(systemMemoryGB) GB")
-                    LabeledContent("macOS", value: ProcessInfo.processInfo.operatingSystemVersionString)
+                    LabeledContent {
+                        Text(chipName)
+                    } label: {
+                        Label("Chip", systemImage: "cpu")
+                    }
+                    LabeledContent {
+                        Text("\(systemMemoryGB) GB")
+                    } label: {
+                        Label("Memory", systemImage: "memorychip")
+                    }
+                    LabeledContent {
+                        Text(ProcessInfo.processInfo.operatingSystemVersionString)
+                    } label: {
+                        Label("macOS", systemImage: "apple.logo")
+                    }
                 }
 
                 // MARK: - Models Section
-                Section {
+                Section("Models") {
                     ModelManagerView()
-                } header: {
-                    HStack {
-                        Text("Models")
-                        Spacer()
-                        Button {
-                            modelManager.refreshCachedModels()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Refresh model list")
-                    }
                 }
 
                 // MARK: - About Section
                 Section("About Klee") {
-                    LabeledContent("Version", value: appVersion)
-                    LabeledContent("Build", value: buildNumber)
-                    LabeledContent("Engine", value: "MLX Swift (on-device)")
+                    LabeledContent {
+                        Text(appVersion)
+                    } label: {
+                        Label("Version", systemImage: "app.badge")
+                    }
+                    LabeledContent {
+                        Text(buildNumber)
+                    } label: {
+                        Label("Build", systemImage: "hammer")
+                    }
+                    LabeledContent {
+                        Text("MLX Swift (on-device)")
+                    } label: {
+                        Label("Engine", systemImage: "bolt.fill")
+                    }
                 }
 
                 // MARK: - ShipSwift Showcase Section
@@ -83,11 +92,11 @@ struct SettingsView: View {
                 .frame(width: 24, height: 24)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             Text("\(app.name) - \(app.tagline)")
-                .foregroundStyle(.accent)
             Spacer()
             Image(systemName: "arrow.up.right")
                 .imageScale(.small)
         }
+        .foregroundStyle(.accent)
     }
 
     // MARK: - Device Info Helpers

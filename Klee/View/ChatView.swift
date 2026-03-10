@@ -88,39 +88,38 @@ struct ChatView: View {
     // MARK: - Message List
 
     private var messageList: some View {
-        List {
-            if viewModel.messages.isEmpty {
-                emptyState
-                    .flipped()
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-            }
-
-            if viewModel.isStreaming,
-               let last = viewModel.messages.last,
-               last.role == .assistant,
-               last.content.isEmpty {
-                thinkingBubble
-                    .flipped()
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-            }
-
-            ForEach(viewModel.messages.reversed()) { message in
-                if !(message.role == .assistant && message.content.isEmpty && viewModel.isStreaming) {
-                    messageBubble(for: message)
+        ZStack {
+            List {
+                if viewModel.isStreaming,
+                   let last = viewModel.messages.last,
+                   last.role == .assistant,
+                   last.content.isEmpty {
+                    thinkingBubble
                         .flipped()
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 }
+
+                ForEach(viewModel.messages.reversed()) { message in
+                    if !(message.role == .assistant && message.content.isEmpty && viewModel.isStreaming) {
+                        messageBubble(for: message)
+                            .flipped()
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .flipped()
+
+            // Empty state sits outside the flipped List to preserve gesture hit testing
+            if viewModel.messages.isEmpty {
+                emptyState
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .flipped()
     }
 
     // MARK: - Error Banner
