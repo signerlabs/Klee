@@ -36,6 +36,13 @@ Klee is a macOS-native local AI chat application powered by MLX Swift for infere
 
 ## Phase Roadmap
 - **Phase 1 (complete)**: Local-only chat, MLX inference, model management, chat history, settings
-- **Phase 2 (current)**: OpenClaw Gateway integration (Node.js subprocess + WebSocket)
+- **Phase 2 (current)**: MCP Agent — `modelcontextprotocol/swift-sdk` + bundled Node.js LTS + MCP Server management UI
 - **Phase 3**: Deep macOS integration, multimodal, Apple Foundation Models
 - **Distribution (pending)**: Sparkle auto-update, Developer ID signing, Notarization, DMG packaging
+
+## Phase 2 Key Decisions
+- OpenClaw abandoned: 1.4GB node_modules, cannot directly interface with MLX Swift
+- Bun rejected: Playwright MCP confirmed broken (Issue #25861), native addon compat only 34%
+- Node.js LTS bundled (~80-100MB): 100% npm ecosystem compatibility, follows Claude Desktop pattern
+- Swift MCP Client SDK: official `modelcontextprotocol/swift-sdk` v0.11.0, SPM dependency
+- Orphan process prevention: Pipe Heartbeat mechanism (same as VS Code / Claude Desktop)

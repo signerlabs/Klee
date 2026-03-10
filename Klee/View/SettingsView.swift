@@ -96,7 +96,6 @@ struct SettingsView: View {
             Image(systemName: "arrow.up.right")
                 .imageScale(.small)
         }
-        .foregroundStyle(.accent)
     }
 
     // MARK: - Device Info Helpers

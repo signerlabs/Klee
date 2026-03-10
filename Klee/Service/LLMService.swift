@@ -90,7 +90,13 @@ class LLMService {
         loadingStatus = "Loading model..."
 
         do {
-            let configuration = ModelConfiguration(id: id)
+            // If the model is already cached locally, load directly from disk to avoid
+            // unnecessary network requests (Hub normally fetches remote hashes even for cached models)
+            let localURL = localCacheURL(for: id)
+            let isCachedLocally = FileManager.default.fileExists(atPath: localURL.path)
+            let configuration = isCachedLocally
+                ? ModelConfiguration(directory: localURL)
+                : ModelConfiguration(id: id)
 
             let container = try await LLMModelFactory.shared.loadContainer(
                 configuration: configuration
@@ -121,6 +127,12 @@ class LLMService {
             self.loadProgress = nil
             self.loadingStatus = nil
         }
+    }
+
+    /// Local cache directory for a model: ~/Library/Caches/models/{org}/{model-name}/
+    private func localCacheURL(for id: String) -> URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return caches.appendingPathComponent("models/\(id)")
     }
 
     // MARK: - Streaming Chat

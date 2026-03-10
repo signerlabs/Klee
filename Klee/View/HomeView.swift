@@ -31,13 +31,12 @@ struct HomeView: View {
                 if chatStore.selectedConversationId != nil {
                     ChatView()
                 } else {
-                    ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a new chat to get started."))
+                    ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a new task to get started."))
                 }
             }
-            .frame(minWidth: 400, idealWidth: 600, maxWidth: 800)
             .environment(\.openSettings, OpenSettingsAction { showSettings = true })
         }
-        .navigationTitle("")
+        .navigationTitle("Klee")
         .task {
             // Auto-load the last used model on launch
             if let lastModelId = modelManager.selectedModelId,
@@ -68,30 +67,32 @@ struct HomeView: View {
     private var sidebarContent: some View {
         @Bindable var store = chatStore
         return VStack {
-            // Header with new chat button
-            HStack {
-                Text("Chats")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    // Remove current empty conversation before creating a new one
-                    chatStore.removeEmptyConversations()
-                    chatStore.createConversation()
-                } label: {
+            // Header with new task button
+            Button {
+                // Remove current empty conversation before creating a new one
+                chatStore.removeEmptyConversations()
+                chatStore.createConversation()
+            } label: {
+                HStack {
+                    Text("New Task")
+                        .font(.headline)
+
+                    Spacer()
+
                     Image(systemName: "square.and.pencil")
                         .imageScale(.large)
-                        .padding(4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.primary.opacity(isNewChatHovering ? 0.1 : 0))
-                        )
                 }
-                .buttonStyle(.plain)
-                .help("New Chat")
-                .onHover { isNewChatHovering = $0 }
+                .contentShape(.rect)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .buttonStyle(.plain)
+            .help("New Task")
+            .onHover { isNewChatHovering = $0 }
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.primary.opacity(isNewChatHovering ? 0.1 : 0))
+            )
+            .padding(.horizontal, 10)
 
             Divider()
 

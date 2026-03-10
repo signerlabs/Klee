@@ -21,7 +21,7 @@ struct Conversation: Identifiable, Codable, Equatable {
         title == Conversation.defaultTitle
     }
 
-    static let defaultTitle = "New Chat"
+    static let defaultTitle = "New Task"
 
     init(id: UUID = UUID(), title: String = Conversation.defaultTitle, messages: [ChatMessage] = [], createdAt: Date = Date(), updatedAt: Date = Date()) {
         self.id = id

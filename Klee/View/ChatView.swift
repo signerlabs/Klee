@@ -114,6 +114,7 @@ struct ChatView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .flipped()
+            .padding(.vertical)
 
             // Empty state sits outside the flipped List to preserve gesture hit testing
             if viewModel.messages.isEmpty {
@@ -233,20 +234,15 @@ struct ChatView: View {
                 Spacer(minLength: 60)
                 Text(message.content)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .padding(8)
                     .foregroundStyle(.white)
-                    .background(Color.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .background(.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
         case .assistant:
-            HStack {
-                assistantBubbleContent(message.content)
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                Spacer(minLength: 60)
-            }
+            assistantBubbleContent(message.content)
+                .padding(8)
 
         case .system:
             HStack {
@@ -356,11 +352,10 @@ struct ChatView: View {
             }
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                .strokeBorder(.tertiary, lineWidth: 1)
         )
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
