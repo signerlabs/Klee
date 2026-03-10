@@ -26,7 +26,6 @@ struct SettingsView: View {
                 // MARK: - Models Section
                 Section {
                     ModelManagerView()
-                        .frame(minHeight: 300)
                 } header: {
                     HStack {
                         Text("Models")
@@ -77,19 +76,17 @@ struct SettingsView: View {
     // MARK: - App Row
 
     private func appRow(_ app: ShipSwiftApp) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "app.fill")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(app.name)
-                    .font(.subheadline.weight(.medium))
-                if let badge = app.badge {
-                    Text(badge)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
+        HStack {
+            Image(app.assetName)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 24, height: 24)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            Text("\(app.name) - \(app.tagline)")
+                .foregroundStyle(.accent)
+            Spacer()
+            Image(systemName: "arrow.up.right")
+                .imageScale(.small)
         }
     }
 
@@ -125,17 +122,12 @@ struct SettingsView: View {
 
     private var shipSwiftApps: [ShipSwiftApp] {
         [
-            ShipSwiftApp(name: "Klee", badge: "This App", url: nil),
-            ShipSwiftApp(name: "SmileMax - Glow Up Coach", badge: nil,
-                         url: URL(string: "https://apps.apple.com/us/app/smilemax/id6758947123")),
-            ShipSwiftApp(name: "Fullpack - Packing & Outfit", badge: nil,
-                         url: URL(string: "https://apps.apple.com/us/app/fullpack-packing-outfit/id6745692929")),
-            ShipSwiftApp(name: "Brushmo - Oral Health Companion", badge: nil,
-                         url: URL(string: "https://apps.apple.com/us/app/brushmo/id6744569822")),
-            ShipSwiftApp(name: "Lifebang - Pro Cleaner", badge: nil,
-                         url: URL(string: "https://apps.apple.com/us/app/lifebang/id6474886848")),
-            ShipSwiftApp(name: "Journey - Goal Tracker", badge: nil,
-                         url: URL(string: "https://apps.apple.com/us/app/journey-goal-tracker-diary/id6748666816")),
+            ShipSwiftApp(name: "ShipSwift", assetName: "ShipSwift Logo", tagline: "MCP Codebase",  customURL: "https://shipswift.app"),
+            ShipSwiftApp(name: "SmileMax",  assetName: "SmileMax Logo",  tagline: "Glow Up Coach",                    appId: "6758947123"),
+            ShipSwiftApp(name: "Fullpack",  assetName: "Fullpack Logo",  tagline: "Packing & Outfit",                 appId: "6745692929"),
+            ShipSwiftApp(name: "Brushmo",   assetName: "Brushmo Logo",   tagline: "Oral Health Companion",            appId: "6744569822"),
+            ShipSwiftApp(name: "Lifebang",  assetName: "Lifebang Logo",  tagline: "Pro Cleaner",                      appId: "6474886848"),
+            ShipSwiftApp(name: "Journey",   assetName: "Journey Logo",   tagline: "Goal Tracker & Diary",             appId: "6748666816"),
         ]
     }
 }
@@ -145,8 +137,16 @@ struct SettingsView: View {
 private struct ShipSwiftApp: Identifiable {
     let id = UUID()
     let name: String
-    let badge: String?
-    let url: URL?
+    let assetName: String
+    let tagline: String
+    var appId: String? = nil
+    var customURL: String? = nil
+
+    var url: URL? {
+        if let custom = customURL { return URL(string: custom) }
+        if let appId { return URL(string: "https://apps.apple.com/app/id\(appId)") }
+        return nil
+    }
 }
 
 // MARK: - Preview

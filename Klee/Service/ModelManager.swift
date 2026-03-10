@@ -38,9 +38,15 @@ class ModelManager {
 
     // MARK: - Filter by System RAM
 
-    /// Detect system memory and filter models runnable on this machine
+    /// Load all recommended models; UI handles graying out incompatible ones
     func filterBySystemRAM() {
-        availableModels = ModelInfo.recommended.filter { $0.minRAM <= systemRAM }
+        availableModels = ModelInfo.recommended
+    }
+
+    /// Whether a model can run on the current machine
+    func isCompatible(_ id: String) -> Bool {
+        guard let model = ModelInfo.recommended.first(where: { $0.id == id }) else { return true }
+        return model.minRAM <= systemRAM
     }
 
     // MARK: - Refresh Cached Models
