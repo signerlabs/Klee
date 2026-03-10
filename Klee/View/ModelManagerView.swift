@@ -2,8 +2,8 @@
 //  ModelManagerView.swift
 //  Klee
 //
-//  模型管理界面：展示推荐模型列表、下载进度、删除、选择。
-//  替代 Ollama 模型管理，直接操作 HuggingFace Hub 缓存。
+//  Model management view: displays recommended model list, download progress, speed, cancel, delete, and selection.
+//  Uses DownloadManager for real-time download progress feedback.
 //
 
 import SwiftUI
@@ -11,28 +11,23 @@ import SwiftUI
 struct ModelManagerView: View {
     @Environment(ModelManager.self) var modelManager
     @Environment(LLMService.self) var llmService
+    @Environment(DownloadManager.self) var downloadManager
     @State private var showDeleteConfirm = false
     @State private var modelToDelete: ModelInfo?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 头部
+            // Header
             headerSection
 
             Divider()
 
-            // 加载进度（如果正在下载/加载模型）
-            if llmService.state == .loading {
-                loadingProgressSection
-                Divider()
-            }
-
-            // 系统信息
+            // System info
             systemInfoSection
 
             Divider()
 
-            // 模型列表
+            // Model list
             modelListSection
         }
         .frame(minWidth: 280)
@@ -46,7 +41,7 @@ struct ModelManagerView: View {
         }
     }
 
-    // MARK: - 头部
+    // MARK: - Header
 
     private var headerSection: some View {
         HStack {
@@ -64,33 +59,7 @@ struct ModelManagerView: View {
         .padding()
     }
 
-    // MARK: - 加载进度
-
-    private var loadingProgressSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(llmService.loadingStatus ?? "Loading...")
-                    .font(.caption.weight(.medium))
-                Spacer()
-                if let progress = llmService.loadProgress {
-                    Text("\(Int(progress * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if let progress = llmService.loadProgress {
-                ProgressView(value: progress)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-            }
-        }
-        .padding()
-        .background(.ultraThinMaterial)
-    }
-
-    // MARK: - 系统信息
+    // MARK: - System Info
 
     private var systemInfoSection: some View {
         HStack(spacing: 6) {
@@ -105,7 +74,7 @@ struct ModelManagerView: View {
         .padding(.vertical, 8)
     }
 
-    // MARK: - 模型列表
+    // MARK: - Model List
 
     private var modelListSection: some View {
         ScrollView {
@@ -138,69 +107,109 @@ struct ModelManagerView: View {
         .padding(.vertical, 40)
     }
 
-    // MARK: - 模型行
+    // MARK: - Model Row
 
     private func modelRow(_ model: ModelInfo) -> some View {
         let isCached = modelManager.isCached(model.id)
         let isSelected = modelManager.selectedModelId == model.id
         let isCurrentlyLoaded = llmService.currentModelId == model.id && llmService.state.isReady
+        let isDownloading = downloadManager.downloadingModelId == model.id
+            && downloadManager.status == .downloading
+        let isLoading = modelManager.selectedModelId == model.id && llmService.state == .loading
 
-        return HStack(spacing: 10) {
-            // 选中/已下载 指示器
-            Image(systemName: statusIcon(isCached: isCached, isSelected: isSelected, isLoaded: isCurrentlyLoaded))
-                .foregroundStyle(statusColor(isCached: isCached, isSelected: isSelected, isLoaded: isCurrentlyLoaded))
-                .font(.title3)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.name)
-                    .font(.subheadline.weight(.medium))
-
-                HStack(spacing: 8) {
-                    Text(model.size)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(model.ramLabel)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+        return VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                // Status indicator
+                if isDownloading || isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 20, height: 20)
+                } else {
+                    Image(systemName: statusIcon(isCached: isCached, isSelected: isSelected, isLoaded: isCurrentlyLoaded))
+                        .foregroundStyle(statusColor(isCached: isCached, isSelected: isSelected, isLoaded: isCurrentlyLoaded))
+                        .font(.title3)
                 }
 
-                // 已缓存时显示实际占用空间
-                if isCached, let cachedBytes = modelManager.cachedSize(for: model.id) {
-                    Text("Downloaded: \(ByteCountFormatter.string(fromByteCount: cachedBytes, countStyle: .file))")
-                        .font(.caption2)
-                        .foregroundStyle(.green.opacity(0.8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.name)
+                        .font(.subheadline.weight(.medium))
+
+                    HStack(spacing: 8) {
+                        Text(model.size)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(model.ramLabel)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    // Downloading: show progress percentage + speed
+                    if isDownloading {
+                        downloadStatusLabel
+                    }
+                    // Loading: show loading status
+                    else if isLoading, let status = llmService.loadingStatus {
+                        Text(status)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    // Cached: show disk space used
+                    else if isCached, let cachedBytes = modelManager.cachedSize(for: model.id) {
+                        Text("Downloaded: \(ByteCountFormatter.string(fromByteCount: cachedBytes, countStyle: .file))")
+                            .font(.caption2)
+                            .foregroundStyle(.green.opacity(0.8))
+                    }
+                }
+
+                Spacer()
+
+                // Action buttons
+                if isDownloading {
+                    // Cancel download button
+                    Button {
+                        cancelDownload()
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                            .foregroundStyle(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Cancel download")
+                } else if isLoading {
+                    // No action buttons while loading
+                } else if isCached {
+                    // Delete button
+                    Button {
+                        modelToDelete = model
+                        showDeleteConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Delete \(model.name)")
+                } else {
+                    // Download button
+                    Button {
+                        downloadAndLoadModel(model)
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(downloadManager.status == .downloading)
+                    .help("Download \(model.name)")
                 }
             }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
 
-            Spacer()
-
-            // 操作按钮
-            if isCached {
-                // 删除按钮
-                Button {
-                    modelToDelete = model
-                    showDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.red.opacity(0.7))
-                }
-                .buttonStyle(.borderless)
-                .help("Delete \(model.name)")
-            } else {
-                // 下载按钮
-                Button {
-                    downloadAndLoadModel(model)
-                } label: {
-                    Image(systemName: "arrow.down.circle")
-                }
-                .buttonStyle(.borderless)
-                .disabled(llmService.state == .loading)
-                .help("Download \(model.name)")
+            // Inline progress bar (loading)
+            if isLoading, let progress = llmService.loadProgress, progress > 0 {
+                ProgressView(value: progress)
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture {
             selectAndLoadModel(model)
@@ -208,7 +217,27 @@ struct ModelManagerView: View {
         .background(isSelected ? Color.accentColor.opacity(0.06) : Color.clear)
     }
 
-    // MARK: - 状态图标和颜色
+    // MARK: - Download Status Label
+
+    private var downloadStatusLabel: some View {
+        HStack(spacing: 6) {
+            if downloadManager.progress.totalFiles > 0 {
+                Text("File \(downloadManager.progress.completedFiles + 1)/\(downloadManager.progress.totalFiles)")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+                    .monospacedDigit()
+            }
+
+            if !downloadManager.progress.speedLabel.isEmpty {
+                Text(downloadManager.progress.speedLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    // MARK: - Status Icon and Color
 
     private func statusIcon(isCached: Bool, isSelected: Bool, isLoaded: Bool) -> String {
         if isLoaded { return "checkmark.circle.fill" }
@@ -224,9 +253,9 @@ struct ModelManagerView: View {
         return .secondary
     }
 
-    // MARK: - 操作
+    // MARK: - Actions
 
-    /// 选择并加载模型
+    /// Select and load a model (already downloaded)
     private func selectAndLoadModel(_ model: ModelInfo) {
         modelManager.selectedModelId = model.id
         UserDefaults.standard.set(model.id, forKey: "lastUsedModelId")
@@ -238,21 +267,34 @@ struct ModelManagerView: View {
         }
     }
 
-    /// 下载并加载模型
+    /// Download and load a model
     private func downloadAndLoadModel(_ model: ModelInfo) {
         modelManager.selectedModelId = model.id
         UserDefaults.standard.set(model.id, forKey: "lastUsedModelId")
 
         Task {
-            await llmService.loadModel(id: model.id)
-            // 下载完成后刷新缓存列表
-            modelManager.refreshCachedModels()
+            // Use DownloadManager for download+load with real-time progress
+            let container = await downloadManager.downloadAndLoad(id: model.id)
+
+            if let container {
+                // Download+load successful, set directly on LLMService
+                llmService.setLoadedContainer(container, id: model.id)
+                modelManager.refreshCachedModels()
+            }
+
+            // Reset DownloadManager state
+            downloadManager.reset()
         }
     }
 
-    /// 删除模型
+    /// Cancel download
+    private func cancelDownload() {
+        downloadManager.cancel()
+    }
+
+    /// Delete a model
     private func deleteModel(_ model: ModelInfo) {
-        // 如果正在使用该模型，先卸载
+        // If the model is currently in use, unload it first
         if llmService.currentModelId == model.id {
             llmService.unloadModel()
         }
@@ -261,11 +303,12 @@ struct ModelManagerView: View {
     }
 }
 
-// MARK: - 预览
+// MARK: - Preview
 
 #Preview {
     ModelManagerView()
         .environment(ModelManager())
         .environment(LLMService())
+        .environment(DownloadManager())
         .frame(width: 320, height: 500)
 }

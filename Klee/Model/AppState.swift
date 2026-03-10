@@ -2,21 +2,21 @@
 //  AppState.swift
 //  Klee
 //
-//  状态枚举与数据模型。
-//  Phase 1 重构：移除进程管理相关类型，新增 MLX 推理层模型。
+//  State enums and data models.
+//  Phase 1 refactor: removed process management types, added MLX inference layer models.
 //
 
 import Foundation
 
-// MARK: - LLM 状态
+// MARK: - LLM State
 
-/// LLM 推理引擎的运行状态
+/// Runtime state of the LLM inference engine
 enum LLMState: Equatable {
-    case idle           // 未加载模型
-    case loading        // 正在加载模型（下载/读取缓存）
-    case ready          // 模型已加载，等待输入
-    case generating     // 正在流式生成
-    case error(String)  // 发生错误
+    case idle           // No model loaded
+    case loading        // Loading model (downloading/reading cache)
+    case ready          // Model loaded, awaiting input
+    case generating     // Streaming generation in progress
+    case error(String)  // An error occurred
 
     var label: String {
         switch self {
@@ -33,28 +33,30 @@ enum LLMState: Equatable {
     }
 }
 
-// MARK: - 模型信息
+// MARK: - Model Info
 
-/// 描述一个可用的 MLX 模型
+/// Describes an available MLX model
 struct ModelInfo: Identifiable, Equatable, Hashable {
-    /// HuggingFace 模型 ID（如 "mlx-community/Qwen3-4B-4bit"）
+    /// HuggingFace model ID (e.g., "mlx-community/Qwen3-4B-4bit")
     let id: String
-    /// 用户友好的显示名
+    /// User-friendly display name
     let name: String
-    /// 预估模型文件大小（如 "~2.5 GB"）
+    /// Estimated model file size (e.g., "~2.5 GB")
     let size: String
-    /// 运行此模型所需的最低系统内存（GB）
+    /// Minimum system RAM (GB) required to run this model
     let minRAM: Int
+    /// Estimated download size in bytes (used for progress calculation)
+    let expectedBytes: Int64
 
-    /// 以内存要求生成描述标签
+    /// Label describing the RAM requirement
     var ramLabel: String {
         "Requires \(minRAM)GB+ RAM"
     }
 }
 
-// MARK: - 聊天消息
+// MARK: - Chat Message
 
-/// 对话中的单条消息
+/// A single message in the conversation
 struct ChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: Role
@@ -75,7 +77,7 @@ struct ChatMessage: Identifiable, Equatable {
     }
 }
 
-// MARK: - 应用错误
+// MARK: - App Errors
 
 enum AppError: LocalizedError {
     case modelLoadFailed(String)

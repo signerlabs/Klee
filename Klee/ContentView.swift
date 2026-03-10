@@ -2,9 +2,9 @@
 //  ContentView.swift
 //  Klee
 //
-//  主容器视图：NavigationSplitView 布局。
-//  侧边栏：模型管理。详情区：聊天视图。
-//  Phase 1 重构：移除 ProcessManager，使用 LLMService + ModelManager。
+//  Main container view: NavigationSplitView layout.
+//  Sidebar: model management. Detail: chat view.
+//  Phase 1 refactor: removed ProcessManager, now uses LLMService + ModelManager.
 //
 
 import SwiftUI
@@ -22,7 +22,7 @@ struct ContentView: View {
         }
         .navigationTitle("Klee")
         .task {
-            // 启动时自动加载上次使用的模型
+            // Auto-load the last used model on launch
             if let lastModelId = modelManager.selectedModelId,
                modelManager.isCached(lastModelId) {
                 await llmService.loadModel(id: lastModelId)
@@ -35,7 +35,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 侧边栏
+    // MARK: - Sidebar
 
     private var sidebarContent: some View {
         VStack(spacing: 0) {
@@ -43,10 +43,27 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 状态标识
+    // MARK: - Status Badge (model name + state)
 
     private var statusBadge: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
+            // Model name
+            if let modelId = llmService.currentModelId {
+                let shortName = modelId.components(separatedBy: "/").last ?? modelId
+                Text(shortName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Generation speed
+            if llmService.state == .generating, llmService.tokensPerSecond > 0 {
+                Text(String(format: "%.1f tok/s", llmService.tokensPerSecond))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            // Status dot + label
             Circle()
                 .fill(statusColor)
                 .frame(width: 8, height: 8)
@@ -81,4 +98,5 @@ struct ContentView: View {
     ContentView()
         .environment(LLMService())
         .environment(ModelManager())
+        .environment(DownloadManager())
 }

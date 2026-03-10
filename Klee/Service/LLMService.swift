@@ -2,8 +2,9 @@
 //  LLMService.swift
 //  Klee
 //
-//  MLX Swift 进程内推理服务。
-//  替代 OllamaService，直接使用 mlx-swift-lm 进行本地模型加载和流式生成。
+//  MLX Swift in-process inference service.
+//  Handles model loading (from downloaded local files) and streaming generation.
+//  Download logic has been separated into DownloadManager.
 //
 
 import Foundation
@@ -14,36 +15,36 @@ import MLXLLM
 @Observable
 class LLMService {
 
-    // MARK: - 可观察属性
+    // MARK: - Observable Properties
 
-    /// 当前 LLM 引擎状态
+    /// Current LLM engine state
     private(set) var state: LLMState = .idle
 
-    /// 当前已加载模型的 ID
+    /// ID of the currently loaded model
     private(set) var currentModelId: String?
 
-    /// 最近一次错误信息
+    /// Most recent error message
     private(set) var error: String?
 
-    /// 模型下载/加载进度（0.0 ~ 1.0）
+    /// Model loading progress (0.0 ~ 1.0), only valid during weight loading
     private(set) var loadProgress: Double?
 
-    /// 加载状态描述文字
+    /// Loading status description text
     private(set) var loadingStatus: String?
 
-    /// 当前生成的 token/s 速度
+    /// Current generation speed in tokens/second
     private(set) var tokensPerSecond: Double = 0
 
-    // MARK: - 私有属性
+    // MARK: - Private Properties
 
-    /// 已加载的模型容器
+    /// The loaded model container
     private var modelContainer: ModelContainer?
 
-    /// 当前生成任务（用于取消）
+    /// Current generation task (for cancellation)
     private var generationTask: Task<Void, Never>?
 
-    /// HuggingFace 镜像地址（国内加速）
-    /// 设置后所有模型下载走镜像，设为 nil 恢复官方源
+    /// HuggingFace mirror URL (for acceleration in China)
+    /// When set, all model downloads use the mirror; set to nil to restore the official source
     static var huggingFaceMirror: String? {
         didSet {
             if let mirror = huggingFaceMirror {
@@ -54,12 +55,31 @@ class LLMService {
         }
     }
 
-    // MARK: - 模型加载
+    // MARK: - Use Downloaded Container
 
-    /// 加载指定模型（从 HuggingFace 下载或读取本地缓存）
-    /// - Parameter id: HuggingFace 模型 ID，如 "mlx-community/Qwen3-4B-4bit"
+    /// Directly set a loaded ModelContainer (provided by DownloadManager)
+    /// - Parameters:
+    ///   - container: The fully loaded model container
+    ///   - id: Model ID
+    func setLoadedContainer(_ container: ModelContainer, id: String) {
+        modelContainer = container
+        currentModelId = id
+        state = .ready
+        loadProgress = nil
+        loadingStatus = nil
+        error = nil
+
+        // Persist the last used model ID
+        UserDefaults.standard.set(id, forKey: "lastUsedModelId")
+    }
+
+    // MARK: - Load Local Downloaded Model
+
+    /// Load a specified model (loads from local cache only, does not trigger download)
+    /// If the model is not downloaded, it will attempt to download (for backward compatibility)
+    /// - Parameter id: HuggingFace model ID
     func loadModel(id: String) async {
-        // 如果当前已加载同一模型，无需重复加载
+        // Skip if the same model is already loaded
         if currentModelId == id, modelContainer != nil, state == .ready {
             return
         }
@@ -67,22 +87,21 @@ class LLMService {
         state = .loading
         error = nil
         loadProgress = 0
-        loadingStatus = "Preparing model..."
+        loadingStatus = "Loading model..."
 
         do {
             let configuration = ModelConfiguration(id: id)
 
-            // loadContainer 自动处理下载（含断点续传）和加载
-            loadingStatus = "Downloading and loading model..."
             let container = try await LLMModelFactory.shared.loadContainer(
                 configuration: configuration
-            ) { progress in
-                let fraction = progress.fractionCompleted
-                let total = progress.totalUnitCount
+            ) { [weak self] progress in
                 Task { @MainActor [weak self] in
-                    self?.loadProgress = fraction
+                    guard let self else { return }
+                    self.loadProgress = progress.fractionCompleted
+                    let completed = progress.completedUnitCount
+                    let total = progress.totalUnitCount
                     if total > 0 {
-                        self?.loadingStatus = "Loading (\(Int(fraction * 100))%)"
+                        self.loadingStatus = "Loading \(completed)/\(total) files..."
                     }
                 }
             }
@@ -93,7 +112,7 @@ class LLMService {
             loadProgress = nil
             loadingStatus = nil
 
-            // 持久化上次使用的模型 ID
+            // Persist the last used model ID
             UserDefaults.standard.set(id, forKey: "lastUsedModelId")
 
         } catch {
@@ -104,11 +123,11 @@ class LLMService {
         }
     }
 
-    // MARK: - 流式聊天
+    // MARK: - Streaming Chat
 
-    /// 发送聊天消息，返回流式 token 输出
-    /// - Parameter messages: 完整的对话历史
-    /// - Returns: 异步字符串流，每个元素是一个 token 片段
+    /// Send chat messages and return a streaming token output
+    /// - Parameter messages: Complete conversation history
+    /// - Returns: Async string stream where each element is a token fragment
     func chat(messages: [ChatMessage]) -> AsyncStream<String> {
         AsyncStream { continuation in
             generationTask = Task { [weak self] in
@@ -121,7 +140,7 @@ class LLMService {
                 self.tokensPerSecond = 0
 
                 do {
-                    // 构建 MLX Chat.Message 数组
+                    // Build MLX Chat.Message array
                     let chatMessages: [Chat.Message] = messages.map { msg in
                         switch msg.role {
                         case .user: .user(msg.content)
@@ -132,13 +151,13 @@ class LLMService {
 
                     let userInput = UserInput(chat: chatMessages)
 
-                    // 准备输入（UserInput → LMInput）
+                    // Prepare input (UserInput -> LMInput)
                     let lmInput = try await container.prepare(input: userInput)
 
-                    // 生成参数
+                    // Generation parameters
                     let parameters = GenerateParameters(temperature: 0.7)
 
-                    // 使用 AsyncStream 版本的 generate API
+                    // Use the AsyncStream version of the generate API
                     let generateStream = try await container.generate(
                         input: lmInput,
                         parameters: parameters
@@ -150,14 +169,14 @@ class LLMService {
                     for await result in generateStream {
                         if Task.isCancelled { break }
 
-                        // result 包含生成的文本片段
+                        // result contains the generated text fragment
                         if let text = result.chunk {
                             continuation.yield(text)
                             tokenCount += 1
                         }
                     }
 
-                    // 计算 tok/s
+                    // Calculate tok/s
                     let elapsed = Date().timeIntervalSince(startTime)
                     if elapsed > 0 {
                         self.tokensPerSecond = Double(tokenCount) / elapsed
@@ -176,9 +195,9 @@ class LLMService {
         }
     }
 
-    // MARK: - 停止生成
+    // MARK: - Stop Generation
 
-    /// 取消当前正在进行的生成
+    /// Cancel the current ongoing generation
     func stopGeneration() {
         generationTask?.cancel()
         generationTask = nil
@@ -187,9 +206,9 @@ class LLMService {
         }
     }
 
-    // MARK: - 卸载模型
+    // MARK: - Unload Model
 
-    /// 卸载当前模型，释放内存
+    /// Unload the current model and free memory
     func unloadModel() {
         stopGeneration()
         modelContainer = nil

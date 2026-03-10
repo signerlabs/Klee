@@ -2,11 +2,31 @@
 //  ChatView.swift
 //  Klee
 //
-//  聊天界面：流式 AI 对话，对接 MLX 本地推理。
-//  保留原有 UI 结构，将 OllamaService 替换为 LLMService。
+//  Chat interface: streaming AI conversation powered by MLX local inference.
+//  Uses flip technique (inspired by ShipSwift SWMessageList) for the message list,
+//  MarkdownTextView for AI reply rendering, and ThinkingIndicator for waiting state.
 //
 
 import SwiftUI
+
+// MARK: - Flip Modifier
+
+/// Flips a view to achieve a bottom-anchored chat list effect.
+///
+/// How it works:
+/// 1. Flip the entire List -> top becomes bottom
+/// 2. Flip each child item -> content direction restored to normal
+/// 3. Reverse the message array -> newest messages appear at the bottom
+///
+/// Reference: https://www.swiftwithvincent.com/blog/building-the-inverted-scroll-of-a-messaging-app
+private extension View {
+    func flipped() -> some View {
+        rotationEffect(.radians(.pi))
+            .scaleEffect(x: -1, y: 1, anchor: .center)
+    }
+}
+
+// MARK: - ChatView
 
 struct ChatView: View {
     @Environment(LLMService.self) var llmService
@@ -18,84 +38,59 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 模型状态栏
-            modelBar
-
-            Divider()
-
-            // 消息列表
+            // Message list (flip technique)
             messageList
 
             Divider()
 
-            // 流式生成指示器
-            if isStreaming {
-                streamingIndicator
-            }
-
-            // 输入栏
+            // Input bar
             inputBar
         }
         .frame(minWidth: 400, minHeight: 300)
     }
 
-    // MARK: - 模型状态栏
+    // MARK: - Message List (flip technique)
 
-    private var modelBar: some View {
-        HStack {
-            Image(systemName: "cpu")
-                .foregroundStyle(.secondary)
-
-            if let modelId = llmService.currentModelId {
-                // 显示模型简称（取最后一段）
-                let shortName = modelId.components(separatedBy: "/").last ?? modelId
-                Text(shortName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("No Model Loaded")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            // 生成速度
-            if llmService.state == .generating, llmService.tokensPerSecond > 0 {
-                Text(String(format: "%.1f tok/s", llmService.tokensPerSecond))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-    }
-
-    // MARK: - 消息列表
-
+    /// Uses List + flip technique to solve the CPU 100% issue with ScrollView + LazyVStack during streaming updates.
+    /// Flip principle: flip the entire List to start from bottom, then flip each child to restore content direction.
     private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if messages.isEmpty {
-                        emptyState
-                    }
-                    ForEach(messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
-                    }
+        List {
+            // Show empty state when no messages (needs flip to restore direction)
+            if messages.isEmpty {
+                emptyState
+                    .flipped()
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            }
+
+            // Show ThinkingIndicator when streaming and the latest assistant message is empty
+            if isStreaming, let last = messages.last, last.role == .assistant, last.content.isEmpty {
+                thinkingBubble
+                    .flipped()
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            }
+
+            // Reverse array so newest messages appear at bottom after flip
+            ForEach(messages.reversed()) { message in
+                // Skip empty assistant placeholder messages (displayed by ThinkingIndicator instead)
+                if !(message.role == .assistant && message.content.isEmpty && isStreaming) {
+                    messageBubble(for: message)
+                        .flipped()
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 }
-                .padding()
-            }
-            .onChange(of: messages.count) {
-                scrollToBottom(proxy)
-            }
-            .onChange(of: messages.last?.content) {
-                scrollToBottom(proxy)
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .flipped()
     }
+
+    // MARK: - Empty State
 
     private var emptyState: some View {
         VStack(spacing: 12) {
@@ -112,87 +107,158 @@ struct ChatView: View {
         .padding(.top, 80)
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        if let last = messages.last {
-            withAnimation(.easeOut(duration: 0.15)) {
-                proxy.scrollTo(last.id, anchor: .bottom)
+    // MARK: - Thinking Bubble
+
+    private var thinkingBubble: some View {
+        HStack {
+            HStack(spacing: 6) {
+                Text("Thinking")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                ThinkingIndicator()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+
+            Spacer(minLength: 60)
+        }
+    }
+
+    // MARK: - Message Bubble
+
+    @ViewBuilder
+    private func messageBubble(for message: ChatMessage) -> some View {
+        switch message.role {
+        case .user:
+            // User message: right-aligned, accent color background
+            HStack {
+                Spacer(minLength: 60)
+                Text(message.content)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .foregroundStyle(.white)
+                    .background(Color.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+
+        case .assistant:
+            // AI message: left-aligned, light gray background, Markdown rendering
+            HStack {
+                MarkdownTextView(text: message.content)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                Spacer(minLength: 60)
+            }
+
+        case .system:
+            // System message: centered, small font
+            HStack {
+                Spacer()
+                Text(message.content)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 4)
+                Spacer()
             }
         }
     }
 
-    // MARK: - 流式生成指示器
+    // MARK: - Input Bar
 
-    private var streamingIndicator: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text("Generating...")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            // 停止生成按钮
-            Button {
-                llmService.stopGeneration()
-                isStreaming = false
-            } label: {
-                Image(systemName: "stop.circle.fill")
-                    .foregroundStyle(.red.opacity(0.7))
-            }
-            .buttonStyle(.plain)
-            .help("Stop generating")
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-    }
-
-    // MARK: - 输入栏
-
-    private var isSendDisabled: Bool {
-        inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || isStreaming
-            || llmService.state != .ready
+    /// Whether the input field contains valid text
+    private var hasText: Bool {
+        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var inputBar: some View {
-        HStack(spacing: 8) {
+        VStack(spacing: 8) {
+            // Text input area
             TextField("Type a message...", text: $inputText, axis: .vertical)
                 .textFieldStyle(.plain)
-                .lineLimit(1...5)
+                .lineLimit(1...8)
                 .focused($isInputFocused)
+                .disabled(isStreaming)
                 .onKeyPress(.return, phases: .down) { event in
                     if event.modifiers.contains(.shift) {
-                        return .ignored // 允许换行
+                        return .ignored // Shift+Return for newline
                     }
                     sendCurrentMessage()
                     return .handled
                 }
 
-            Button(action: sendCurrentMessage) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(isSendDisabled ? .gray : .accentColor)
+            // Bottom toolbar: hint text + buttons
+            HStack(spacing: 12) {
+                // Hint text
+                if isStreaming {
+                    HStack(spacing: 4) {
+                        ThinkingIndicator(dotSize: 4, dotColor: .secondary)
+                        Text("Generating...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if llmService.state == .loading {
+                    Text("Loading model...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if llmService.state == .idle {
+                    Text("Select a model to start")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                // Action buttons
+                if isStreaming {
+                    // Stop generation
+                    Button {
+                        llmService.stopGeneration()
+                        isStreaming = false
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.red.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop generating")
+                } else {
+                    // Send button
+                    Button(action: sendCurrentMessage) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 24))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!hasText || llmService.state != .ready)
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(isSendDisabled)
         }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+        )
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
-    // MARK: - 发送消息
+    // MARK: - Send Message
 
     private func sendCurrentMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isStreaming, llmService.state == .ready else { return }
         inputText = ""
 
-        // 添加用户消息
+        // Add user message
         messages.append(ChatMessage(role: .user, content: text))
 
-        // 创建空的助手消息占位（用于流式填充）
+        // Create empty assistant message placeholder (for streaming fill)
         let assistantMsg = ChatMessage(role: .assistant, content: "")
         messages.append(assistantMsg)
         let assistantID = assistantMsg.id
@@ -200,26 +266,85 @@ struct ChatView: View {
         isStreaming = true
 
         Task {
-            // 传入完整对话历史（不含空的助手占位消息）
+            // Pass full conversation history (excluding empty assistant placeholder)
             let historyForAPI = messages
                 .filter { $0.role != .system }
-                .dropLast() // 移除空的助手占位
+                .dropLast() // Remove empty assistant placeholder
                 .map { $0 }
 
             let stream = llmService.chat(messages: Array(historyForAPI))
 
+            // State for filtering <think>...</think> tags
+            var insideThink = false
+            var buffer = ""
+
             for await token in stream {
-                if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                    messages[idx].content += token
+                buffer += token
+
+                // Process <think> tags: incrementally consume displayable content from buffer
+                while !buffer.isEmpty {
+                    if insideThink {
+                        // Inside think block, looking for </think>
+                        if let endRange = buffer.range(of: "</think>") {
+                            // Discard thinking content, skip past </think>
+                            buffer = String(buffer[endRange.upperBound...])
+                            insideThink = false
+                        } else {
+                            // Haven't received complete </think> yet, keep buffer and wait for more tokens
+                            break
+                        }
+                    } else {
+                        // Not inside think block, looking for <think>
+                        if let startRange = buffer.range(of: "<think>") {
+                            // Output content before <think>
+                            let before = String(buffer[..<startRange.lowerBound])
+                            if !before.isEmpty,
+                               let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+                                messages[idx].content += before
+                            }
+                            buffer = String(buffer[startRange.upperBound...])
+                            insideThink = true
+                        } else if buffer.contains("<") {
+                            // Possibly incomplete <think> tag, output the safe part before <
+                            if let ltIndex = buffer.firstIndex(of: "<") {
+                                let safe = String(buffer[..<ltIndex])
+                                if !safe.isEmpty,
+                                   let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+                                    messages[idx].content += safe
+                                }
+                                buffer = String(buffer[ltIndex...])
+                            }
+                            break
+                        } else {
+                            // No tags found, output everything
+                            if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+                                messages[idx].content += buffer
+                            }
+                            buffer = ""
+                        }
+                    }
                 }
             }
 
-            // 如果助手消息仍为空（生成失败），移除占位
+            // After stream ends, output remaining non-thinking content in buffer
+            if !insideThink && !buffer.isEmpty {
+                if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+                    messages[idx].content += buffer
+                }
+            }
+
+            // Trim leading whitespace (may remain after think tag filtering)
+            if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+                messages[idx].content = messages[idx].content
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            // If assistant message is still empty (generation failed), remove placeholder
             if let idx = messages.firstIndex(where: { $0.id == assistantID }),
                messages[idx].content.isEmpty {
                 messages.remove(at: idx)
 
-                // 如果有错误信息，显示为系统消息
+                // If there's an error message, display it as a system message
                 if let error = llmService.error {
                     messages.append(ChatMessage(role: .system, content: "Error: \(error)"))
                 }
@@ -230,49 +355,7 @@ struct ChatView: View {
     }
 }
 
-// MARK: - 消息气泡
-
-private struct MessageBubble: View {
-    let message: ChatMessage
-
-    var body: some View {
-        HStack {
-            if message.role == .user { Spacer(minLength: 60) }
-
-            if message.role == .system {
-                // 系统消息：小字体，无气泡
-                Text(message.content)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 4)
-            } else {
-                VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .background(bubbleBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-            }
-
-            if message.role == .assistant || message.role == .system { Spacer(minLength: 60) }
-        }
-    }
-
-    private var bubbleBackground: some ShapeStyle {
-        switch message.role {
-        case .user:
-            return AnyShapeStyle(Color.accentColor.opacity(0.15))
-        case .assistant:
-            return AnyShapeStyle(Color(nsColor: .controlBackgroundColor))
-        case .system:
-            return AnyShapeStyle(Color.orange.opacity(0.1))
-        }
-    }
-}
-
-// MARK: - 预览
+// MARK: - Preview
 
 #Preview {
     ChatView()
