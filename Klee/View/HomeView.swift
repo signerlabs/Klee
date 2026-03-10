@@ -13,8 +13,6 @@ struct HomeView: View {
     @Environment(ModelManager.self) var modelManager
     @Environment(ChatStore.self) var chatStore
     @State private var showSettings = false
-    @State private var isNewChatHovering = false
-
     // Rename alert state
     @State private var isRenamingConversation = false
     @State private var renamingConversationId: UUID?
@@ -84,14 +82,8 @@ struct HomeView: View {
                 }
                 .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .sidebarHoverButton()
             .help("New Task")
-            .onHover { isNewChatHovering = $0 }
-            .padding(6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.primary.opacity(isNewChatHovering ? 0.1 : 0))
-            )
             .padding(.horizontal, 10)
 
             Divider()
@@ -154,11 +146,11 @@ struct HomeView: View {
                         .foregroundStyle(.primary)
                     Spacer()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
+                .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .sidebarHoverButton()
+            .padding(.horizontal, 10)
+            .padding(.bottom)
         }
     }
 
