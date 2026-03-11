@@ -2,80 +2,58 @@
 //  SettingsView.swift
 //  Klee
 //
-//  Settings sheet: Device info, model management, about, and ShipSwift showcase.
+//  Settings sheet with three panels: Connectors, Models, About.
 //
 
 import SwiftUI
 
+// MARK: - Settings Panel Enum
+
+/// Identifies which settings panel to display.
+enum SettingsPanel: String, Identifiable, CaseIterable {
+    case connectors
+    case models
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .connectors: "Connectors"
+        case .models: "Models"
+        case .about: "About"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .connectors: "puzzlepiece.extension"
+        case .models: "cpu"
+        case .about: "info.circle"
+        }
+    }
+}
+
+// MARK: - Settings View
+
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @State var initialPanel: SettingsPanel
 
     var body: some View {
         NavigationStack {
             Form {
-                // MARK: - Device Section
-                Section("Device") {
-                    LabeledContent {
-                        Text(chipName)
-                    } label: {
-                        Label("Chip", systemImage: "cpu")
-                    }
-                    LabeledContent {
-                        Text("\(systemMemoryGB) GB")
-                    } label: {
-                        Label("Memory", systemImage: "memorychip")
-                    }
-                    LabeledContent {
-                        Text(ProcessInfo.processInfo.operatingSystemVersionString)
-                    } label: {
-                        Label("macOS", systemImage: "apple.logo")
-                    }
-                }
-
-                // MARK: - Models Section
-                Section("Models") {
-                    ModelManagerView()
-                }
-
-                // MARK: - MCP Servers Section
-                Section("MCP Servers") {
-                    MCPServerListView()
-                }
-
-                // MARK: - About Section
-                Section("About Klee") {
-                    LabeledContent {
-                        Text(appVersion)
-                    } label: {
-                        Label("Version", systemImage: "app.badge")
-                    }
-                    LabeledContent {
-                        Text(buildNumber)
-                    } label: {
-                        Label("Build", systemImage: "hammer")
-                    }
-                    LabeledContent {
-                        Text("MLX Swift (on-device)")
-                    } label: {
-                        Label("Engine", systemImage: "bolt.fill")
-                    }
-                }
-
-                // MARK: - ShipSwift Showcase Section
-                Section("Apps Built with ShipSwift") {
-                    ForEach(shipSwiftApps) { app in
-                        if let url = app.url {
-                            Link(destination: url) {
-                                appRow(app)
-                            }
-                        } else {
-                            appRow(app)
-                        }
-                    }
+                switch initialPanel {
+                case .connectors:
+                    connectorsContent
+                case .models:
+                    modelsContent
+                case .about:
+                    aboutContent
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle("Settings")
+            .navigationTitle(initialPanel.title)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -84,7 +62,82 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(minWidth: 540, idealWidth: 600, minHeight: 600, idealHeight: 700)
+        .frame(minWidth: 540, idealWidth: 600, minHeight: 500, idealHeight: 600)
+    }
+
+    // MARK: - Connectors Panel
+
+    @ViewBuilder
+    private var connectorsContent: some View {
+        Section {
+            MCPServerListView()
+        } footer: {
+            Text("Connectors let Klee talk to external tools and services — like browsing the web, reading files, or querying databases. Each connector is a small plugin (called an MCP server) that gives the AI new abilities beyond just chatting.")
+        }
+    }
+
+    // MARK: - Models Panel
+
+    @ViewBuilder
+    private var modelsContent: some View {
+        Section {
+            LabeledContent {
+                Text(chipName)
+            } label: {
+                Label("Chip", systemImage: "cpu")
+            }
+            LabeledContent {
+                Text("\(systemMemoryGB) GB")
+            } label: {
+                Label("Memory", systemImage: "memorychip")
+            }
+            LabeledContent {
+                Text(ProcessInfo.processInfo.operatingSystemVersionString)
+            } label: {
+                Label("macOS", systemImage: "apple.logo")
+            }
+        }
+
+        Section {
+            ModelManagerView()
+        } footer: {
+            Text("Klee runs AI models directly on your Mac — your conversations never leave your device. Models need to be downloaded once before use. Smaller models are faster and use less memory, while larger models give more detailed and nuanced answers. As a general rule, pick the largest model your Mac can comfortably run.")
+        }
+    }
+
+    // MARK: - About Panel
+
+    @ViewBuilder
+    private var aboutContent: some View {
+        Section {
+            LabeledContent {
+                Text(appVersion)
+            } label: {
+                Label("Version", systemImage: "app.badge")
+            }
+            LabeledContent {
+                Text(buildNumber)
+            } label: {
+                Label("Build", systemImage: "hammer")
+            }
+            LabeledContent {
+                Text("MLX Swift (on-device)")
+            } label: {
+                Label("Engine", systemImage: "bolt.fill")
+            }
+        }
+
+        Section("Apps Built with ShipSwift") {
+            ForEach(shipSwiftApps) { app in
+                if let url = app.url {
+                    Link(destination: url) {
+                        appRow(app)
+                    }
+                } else {
+                    appRow(app)
+                }
+            }
+        }
     }
 
     // MARK: - App Row
@@ -164,11 +217,19 @@ private struct ShipSwiftApp: Identifiable {
 
 // MARK: - Preview
 
-#Preview {
-    SettingsView()
+#Preview("Connectors") {
+    SettingsView(initialPanel: .connectors)
+        .environment(MCPServerStore())
+        .environment(MCPServerManager())
+}
+
+#Preview("Models") {
+    SettingsView(initialPanel: .models)
         .environment(ModelManager())
         .environment(LLMService())
         .environment(DownloadManager())
-        .environment(MCPServerStore())
-        .environment(MCPServerManager())
+}
+
+#Preview("About") {
+    SettingsView(initialPanel: .about)
 }

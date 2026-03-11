@@ -11,6 +11,10 @@ import SwiftUI
 struct InspectorView: View {
     let items: [InspectorItem]
 
+    /// Throttle state for scroll-to-bottom (prevents per-token jitter during streaming)
+    @State private var lastScrollTime: Date = .distantPast
+    @State private var trailingScrollTask: Task<Void, Never>?
+
     var body: some View {
         Group {
             if items.isEmpty {
@@ -50,8 +54,18 @@ struct InspectorView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .onChange(of: items) {
-                // Fires on count AND content changes (InspectorItem is Equatable)
-                withAnimation(.easeOut(duration: 0.15)) {
+                let now = Date()
+                if now.timeIntervalSince(lastScrollTime) >= 0.4 {
+                    // Enough time has passed — scroll immediately
+                    lastScrollTime = now
+                    proxy.scrollTo("inspector-bottom", anchor: .bottom)
+                }
+                // Always schedule a trailing scroll to catch the final update
+                trailingScrollTask?.cancel()
+                trailingScrollTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(450))
+                    guard !Task.isCancelled else { return }
+                    lastScrollTime = Date()
                     proxy.scrollTo("inspector-bottom", anchor: .bottom)
                 }
             }

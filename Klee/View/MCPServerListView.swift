@@ -30,7 +30,7 @@ struct MCPServerListView: View {
         Button {
             showAddSheet = true
         } label: {
-            Label("Add Server", systemImage: "plus")
+            Label("Add Connector", systemImage: "plus")
         }
         .sheet(isPresented: $showAddSheet) {
             MCPServerEditView(mode: .create) { newServer in

@@ -12,11 +12,14 @@ struct HomeView: View {
     @Environment(LLMService.self) var llmService
     @Environment(ModelManager.self) var modelManager
     @Environment(ChatStore.self) var chatStore
-    @State private var showSettings = false
+    @State private var activeSettingsPanel: SettingsPanel?
     // Rename alert state
     @State private var isRenamingConversation = false
     @State private var renamingConversationId: UUID?
     @State private var renameText = ""
+    // Delete confirmation state
+    @State private var isDeletingConversation = false
+    @State private var deletingConversationId: UUID?
 
     var body: some View {
         @Bindable var store = chatStore
@@ -25,14 +28,8 @@ struct HomeView: View {
             sidebarContent
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
         } detail: {
-            Group {
-                if chatStore.selectedConversationId != nil {
-                    ChatView()
-                } else {
-                    ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a new task to get started."))
-                }
-            }
-            .environment(\.openSettings, OpenSettingsAction { showSettings = true })
+            ChatView()
+            .environment(\.openSettings, OpenSettingsAction { activeSettingsPanel = .models })
         }
         .navigationTitle("Klee")
         .task {
@@ -45,18 +42,16 @@ struct HomeView: View {
             // Clean up empty conversations from previous sessions
             chatStore.removeEmptyConversations()
 
-            // Ensure at least one conversation exists
-            if chatStore.conversations.isEmpty {
-                chatStore.createConversation()
-            }
+            // Always start with a fresh empty conversation (shows welcome page)
+            chatStore.createConversation()
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 statusBadge
             }
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
+        .sheet(item: $activeSettingsPanel) { panel in
+            SettingsView(initialPanel: panel)
         }
     }
 
@@ -64,7 +59,7 @@ struct HomeView: View {
 
     private var sidebarContent: some View {
         @Bindable var store = chatStore
-        return VStack {
+        return VStack(spacing: 0) {
             // Header with new task button
             Button {
                 // Remove current empty conversation before creating a new one
@@ -87,6 +82,7 @@ struct HomeView: View {
             .padding(.horizontal, 10)
 
             Divider()
+                .padding(8)
 
             // Conversation list
             List(selection: $store.selectedConversationId) {
@@ -106,7 +102,8 @@ struct HomeView: View {
                             Divider()
 
                             Button(role: .destructive) {
-                                chatStore.deleteConversation(id: conversation.id)
+                                deletingConversationId = conversation.id
+                                isDeletingConversation = true
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
@@ -132,12 +129,40 @@ struct HomeView: View {
                     }
                 }
             }
+            .alert("Delete Conversation", isPresented: $isDeletingConversation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) {
+                    if let id = deletingConversationId {
+                        chatStore.deleteConversation(id: id)
+                    }
+                }
+            } message: {
+                Text("This conversation will be permanently deleted.")
+            }
 
             Divider()
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
 
-            // Settings entry at bottom
-            Button {
-                showSettings = true
+            // Settings menu at bottom
+            Menu {
+                Button {
+                    activeSettingsPanel = .connectors
+                } label: {
+                    Label("Connectors", systemImage: "puzzlepiece.extension")
+                }
+
+                Button {
+                    activeSettingsPanel = .models
+                } label: {
+                    Label("Models", systemImage: "cpu")
+                }
+
+                Button {
+                    activeSettingsPanel = .about
+                } label: {
+                    Label("About", systemImage: "info.circle")
+                }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "gearshape")
@@ -146,11 +171,12 @@ struct HomeView: View {
                         .foregroundStyle(.primary)
                     Spacer()
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 10)
                 .contentShape(.rect)
             }
+            .menuStyle(.button)
             .sidebarHoverButton()
-            .padding(.horizontal, 10)
-            .padding(.bottom)
         }
     }
 

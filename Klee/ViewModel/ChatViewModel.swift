@@ -323,6 +323,12 @@ class ChatViewModel {
         llmService?.stopGeneration()
         isStreaming = false
         currentToolCall = nil
+
+        // Persist inspector items so they survive conversation switches
+        if let convId = conversationId, let store = chatStore {
+            store.updateInspectorItems(inspectorItems, for: convId)
+            store.saveConversation(id: convId)
+        }
     }
 
     // MARK: - Reset on Conversation Switch

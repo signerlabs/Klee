@@ -4,20 +4,9 @@
 //
 //  Chat interface: message list + input bar.
 //  All business logic is handled by ChatViewModel.
-//  Uses flip technique for bottom-anchored message list.
 //
 
 import SwiftUI
-
-// MARK: - Flip Modifier
-
-/// Flips a view to achieve a bottom-anchored chat list effect.
-private extension View {
-    func flipped() -> some View {
-        rotationEffect(.radians(.pi))
-            .scaleEffect(x: -1, y: 1, anchor: .center)
-    }
-}
 
 // MARK: - ChatView
 
@@ -30,6 +19,10 @@ struct ChatView: View {
     @State private var viewModel = ChatViewModel()
     @State private var showInspector = false
     @FocusState private var isInputFocused: Bool
+
+    /// Throttle state for scroll-to-bottom
+    @State private var lastScrollTime: Date = .distantPast
+    @State private var trailingScrollTask: Task<Void, Never>?
 
     /// Whether the user has no downloaded models at all
     private var needsModelDownload: Bool {
@@ -44,15 +37,28 @@ struct ChatView: View {
         return nil
     }
 
+    /// Whether to show the welcome page (no messages yet).
+    /// Uses chatStore directly (available immediately via @Environment)
+    /// instead of viewModel.messages (which requires onAppear to set chatStore).
+    private var showWelcome: Bool {
+        let msgs = chatStore.currentConversation?.messages ?? []
+        return msgs.isEmpty && !viewModel.isStreaming
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Inline error banner when model loading fails
-            if let errorMessage {
-                errorBanner(message: errorMessage)
+        Group {
+            if showWelcome {
+                welcomeView
+            } else {
+                VStack(spacing: 0) {
+                    if let errorMessage {
+                        errorBanner(message: errorMessage)
+                    }
+                    messageList
+                    Divider()
+                    inputBar
+                }
             }
-            messageList
-            Divider()
-            inputBar
         }
         .frame(minWidth: 400, minHeight: 300)
         .inspector(isPresented: $showInspector) {
@@ -77,7 +83,12 @@ struct ChatView: View {
             viewModel.mcpClientManager = mcpClientManager
         }
         .onChange(of: chatStore.selectedConversationId) {
+            trailingScrollTask?.cancel()
+            trailingScrollTask = nil
             viewModel.resetForNewConversation()
+        }
+        .onChange(of: showWelcome) { _, isWelcome in
+            showInspector = !isWelcome
         }
     }
 
@@ -85,36 +96,66 @@ struct ChatView: View {
 
     private var messageList: some View {
         ZStack {
-            List {
-                if viewModel.isStreaming,
-                   let last = viewModel.messages.last,
-                   last.role == .assistant,
-                   last.content.isEmpty {
-                    thinkingBubble
-                        .flipped()
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                }
+            ScrollViewReader { proxy in
+                List {
+                    ForEach(viewModel.messages) { message in
+                        if !(message.role == .assistant && message.content.isEmpty && viewModel.isStreaming) {
+                            messageBubble(for: message)
+                                .id(message.id)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        }
+                    }
 
-                ForEach(viewModel.messages.reversed()) { message in
-                    if !(message.role == .assistant && message.content.isEmpty && viewModel.isStreaming) {
-                        messageBubble(for: message)
-                            .flipped()
+                    if viewModel.isStreaming,
+                       let last = viewModel.messages.last,
+                       last.role == .assistant,
+                       last.content.isEmpty {
+                        thinkingBubble
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            .id("chat-thinking")
                     }
+
+                    // Invisible bottom anchor
+                    Color.clear
+                        .frame(height: 1)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                        .id("chat-bottom")
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .onChange(of: viewModel.messages.last?.content) {
+                    throttleScroll(proxy: proxy)
+                }
+                .onChange(of: viewModel.messages.count) {
+                    throttleScroll(proxy: proxy)
+                }
+                .onChange(of: viewModel.isStreaming) {
+                    throttleScroll(proxy: proxy)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .flipped()
 
-            // Empty state sits outside the flipped List to preserve gesture hit testing
-            if viewModel.messages.isEmpty {
-                emptyState
-            }
+        }
+    }
+
+    /// Throttled scroll-to-bottom: at most once every 400ms, with a trailing scroll to catch the final update.
+    private func throttleScroll(proxy: ScrollViewProxy) {
+        let now = Date()
+        if now.timeIntervalSince(lastScrollTime) >= 0.4 {
+            lastScrollTime = now
+            proxy.scrollTo("chat-bottom", anchor: .bottom)
+        }
+        trailingScrollTask?.cancel()
+        trailingScrollTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            lastScrollTime = Date()
+            proxy.scrollTo("chat-bottom", anchor: .bottom)
         }
     }
 
@@ -145,60 +186,63 @@ struct ChatView: View {
         .padding(.top, 8)
     }
 
-    // MARK: - Empty State
+    // MARK: - Welcome View
 
-    @ViewBuilder
-    private var emptyState: some View {
-        if needsModelDownload {
-            onboardingState
-        } else {
-            defaultEmptyState
+    /// Time-based greeting text
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "Good Morning"
+        case 12..<17: return "Good Afternoon"
+        case 17..<22: return "Good Evening"
+        default: return "Good Night"
         }
     }
 
-    /// Default empty chat placeholder
-    private var defaultEmptyState: some View {
-        VStack(spacing: 12) {
+    private var welcomeView: some View {
+        VStack(spacing: 0) {
             Spacer()
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.largeTitle)
-                .foregroundStyle(.quaternary)
-            Text("Send a message to start chatting")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 80)
-    }
 
-    // MARK: - Onboarding State (first launch, no models downloaded)
+            // Greeting
+            VStack(spacing: 16) {
+                HStack(spacing: 20) {
+                    Image(.kleeLogo)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    Text(greeting)
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundStyle(.primary)
+                }
+                
+                Text("How can Klee help you today?")
+                    .foregroundStyle(.secondary)
 
-    private var onboardingState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text("Welcome to Klee")
-                .font(.title3)
-                .fontWeight(.semibold)
-            Text("Download a model to start chatting locally.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button {
-                openSettings()
-            } label: {
-                Label("Download a Model", systemImage: "arrow.down.to.line")
+                if needsModelDownload {
+                    // Onboarding: prompt to download a model
+                    Text("Download a model to start chatting locally.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        openSettings()
+                    } label: {
+                        Label("Download a Model", systemImage: "arrow.down.to.line")
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.borderedProminent)
+                    .padding(.top, 4)
+                }
             }
-            .controlSize(.large)
-            .buttonStyle(.borderedProminent)
-            .padding(.top, 4)
+
             Spacer()
+
+            // Centered input bar
+            inputBar
+                .frame(maxWidth: 600)
+                .padding(.bottom, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 60)
     }
 
     // MARK: - Thinking Bubble
@@ -206,10 +250,9 @@ struct ChatView: View {
     private var thinkingBubble: some View {
         HStack {
             HStack(spacing: 6) {
-                Text("Thinking")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
                 ThinkingIndicator()
+                Text("Implementing...")
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
