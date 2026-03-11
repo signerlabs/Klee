@@ -154,53 +154,27 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Status Badge (model name + state)
+    // MARK: - Status Badge (minimal: only loading spinner or error dot)
 
+    @ViewBuilder
     private var statusBadge: some View {
-        HStack(spacing: 6) {
-            // Model name
-            if let modelId = llmService.currentModelId {
-                let shortName = modelId.components(separatedBy: "/").last ?? modelId
-                Text(shortName)
+        switch llmService.state {
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            // Generation speed
-            if llmService.state == .generating, llmService.tokensPerSecond > 0 {
-                Text(String(format: "%.1f tok/s", llmService.tokensPerSecond))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-
-            // Status dot + label
+        case .error:
             Circle()
-                .fill(statusColor)
+                .fill(.red)
                 .frame(width: 8, height: 8)
-            Text(statusLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var statusColor: Color {
-        switch llmService.state {
-        case .ready:        return .green
-        case .generating:   return .green
-        case .loading:      return .orange
-        case .error:        return .red
-        case .idle:         return .gray
-        }
-    }
-
-    private var statusLabel: String {
-        switch llmService.state {
-        case .ready:        return "Ready"
-        case .generating:   return "Generating"
-        case .loading:      return "Loading..."
-        case .error:        return "Error"
-        case .idle:         return "Not Loaded"
+                .help("Model error — see chat for details")
+        default:
+            // Ready / Generating / Idle — keep toolbar clean
+            EmptyView()
         }
     }
 }

@@ -9,6 +9,7 @@
 
 import Foundation
 import MCP
+@preconcurrency import MLXLMCommon
 import Observation
 import System
 
@@ -198,7 +199,7 @@ class MCPClientManager {
     }
 
     /// Convert Tool.Content to a readable string
-    private func contentToString(_ content: Tool.Content) -> String {
+    private func contentToString(_ content: MCP.Tool.Content) -> String {
         switch content {
         case .text(let text):
             return text
@@ -213,74 +214,75 @@ class MCPClientManager {
         }
     }
 
-    // MARK: - System Prompt Generation
+    // MARK: - Native Tool Specs (for MLX Swift tool calling API)
 
-    /// Generate a system prompt fragment describing all available MCP tools.
-    /// Uses a compact format with few-shot example to maximize small model compliance.
-    var toolsSystemPrompt: String {
-        guard !allTools.isEmpty else { return "" }
+    /// Convert all MCP tools to MLX Swift ToolSpec format for native tool calling.
+    /// ToolSpec is [String: any Sendable] matching OpenAI function calling schema.
+    var toolSpecs: [[String: any Sendable]]? {
+        guard !allTools.isEmpty else { return nil }
 
-        var prompt = """
-You are a macOS assistant with full access to the tools listed below. You CAN and SHOULD use them to read, write, edit, move, and delete files when the user asks. Never say you cannot perform an action if a tool exists for it.
-
-To use a tool, output a JSON block inside a markdown code fence labeled "tool":
-
-```tool
-{"name": "TOOL_NAME", "arguments": {"key": "value"}}
-```
-
-Example — user asks "delete notes.txt from desktop", you output:
-
-```tool
-{"name": "write_file", "arguments": {"path": "/Users/m4pro/Desktop/notes.txt", "content": ""}}
-```
-
-Rules:
-- Use tools immediately — do NOT tell the user to do it manually.
-- You have FULL permission to read, write, create, edit, move, and search files within the allowed directories.
-- After receiving a tool result, continue your response naturally.
-
-Tools:
-"""
-
-        for tool in allTools {
-            prompt += "\n- \(tool.name)"
-            if let description = tool.description {
-                // Truncate long descriptions to keep prompt compact
-                let short = description.count > 100 ? String(description.prefix(100)) + "..." : description
-                prompt += ": \(short)"
+        return allTools.map { tool -> [String: any Sendable] in
+            // Convert MCP Value inputSchema to [String: Any] dictionary
+            var parameters: [String: any Sendable] = ["type": "object"]
+            if let data = try? JSONEncoder().encode(tool.inputSchema),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: any Sendable] {
+                parameters = dict
             }
-            // Only show required parameters, not the full JSON schema
-            if let params = extractRequiredParams(from: tool.inputSchema) {
-                prompt += " | params: \(params)"
-            }
+
+            return [
+                "type": "function",
+                "function": [
+                    "name": tool.name,
+                    "description": tool.description ?? "",
+                    "parameters": parameters,
+                ] as [String: any Sendable],
+            ] as [String: any Sendable]
         }
-
-        prompt += "\n"
-        return prompt
     }
 
-    /// Extract a compact parameter summary from a JSON Schema Value.
-    /// Returns something like "path (string, required)" instead of the full schema.
-    private func extractRequiredParams(from schema: Value) -> String? {
-        // Encode to JSON, then decode to dictionary for easier traversal
-        guard let data = try? JSONEncoder().encode(schema),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let properties = dict["properties"] as? [String: Any] else {
-            return nil
+    /// Behavioral system prompt for tool calling (no tool definitions — those go via native API).
+    var toolBehaviorPrompt: String {
+        guard !allTools.isEmpty else { return "" }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return """
+            You are a macOS assistant with full access to tools. Use tools immediately when they can help — do NOT tell the user to do it manually. You have FULL permission to read, write, create, edit, move, and search files within the allowed directories. After receiving a tool result, continue your response naturally to the user.
+
+            The current user's home directory is: \(home)
+            Use absolute paths. For example: Desktop = \(home)/Desktop, Documents = \(home)/Documents.
+            """
+    }
+
+    /// Call a tool by name with arguments from MLX's JSONValue format.
+    /// Used when the native tool calling API returns a ToolCall.
+    func callToolFromNative(name: String, arguments: [String: MLXLMCommon.JSONValue]) async throws -> String {
+        // Convert JSONValue arguments to MCP Value arguments
+        let mcpArgs = try convertJSONValueToMCPValues(arguments)
+        return try await callTool(name: name, arguments: mcpArgs)
+    }
+
+    /// Convert MLX JSONValue dictionary to MCP Value dictionary
+    private func convertJSONValueToMCPValues(_ dict: [String: MLXLMCommon.JSONValue]) throws -> [String: Value] {
+        var result: [String: Value] = [:]
+        for (key, val) in dict {
+            result[key] = convertJSONValueToMCPValue(val)
         }
+        return result
+    }
 
-        let required = (dict["required"] as? [String]) ?? []
-        var parts: [String] = []
-
-        for (name, prop) in properties {
-            guard let propDict = prop as? [String: Any] else { continue }
-            let type = propDict["type"] as? String ?? "any"
-            let isRequired = required.contains(name)
-            parts.append("\(name)(\(type)\(isRequired ? ",required" : ""))")
+    /// Convert a single MLX JSONValue to MCP Value
+    private func convertJSONValueToMCPValue(_ val: MLXLMCommon.JSONValue) -> Value {
+        switch val {
+        case .null: return .null
+        case .bool(let b): return .bool(b)
+        case .int(let i): return .int(i)
+        case .double(let d): return .double(d)
+        case .string(let s): return .string(s)
+        case .array(let arr): return .array(arr.map { convertJSONValueToMCPValue($0) })
+        case .object(let obj):
+            var dict: [String: Value] = [:]
+            for (k, v) in obj { dict[k] = convertJSONValueToMCPValue(v) }
+            return .object(dict)
         }
-
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     // MARK: - Helpers

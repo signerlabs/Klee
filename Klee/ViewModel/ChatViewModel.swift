@@ -8,8 +8,34 @@
 //
 
 import Foundation
-import MCP
+@preconcurrency import MLXLMCommon
 import Observation
+
+// MARK: - Inspector Item
+
+/// Represents a single entry in the Inspector panel (thinking block or tool call)
+struct InspectorItem: Identifiable, Codable, Equatable {
+    let id: UUID
+    let timestamp: Date
+    var content: Content
+
+    enum Content: Codable, Equatable {
+        case thinking(String)
+        case toolCall(name: String, arguments: String, status: ToolCallStatus)
+    }
+
+    enum ToolCallStatus: Codable, Equatable {
+        case calling
+        case completed(result: String)
+        case failed(error: String)
+    }
+
+    init(timestamp: Date, content: Content) {
+        self.id = UUID()
+        self.timestamp = timestamp
+        self.content = content
+    }
+}
 
 @Observable
 @MainActor
@@ -31,6 +57,17 @@ class ChatViewModel {
 
     /// Current active tool call (nil when no tool is being invoked)
     var currentToolCall: ToolCallState?
+
+    /// All thinking and tool call events for the current conversation, shown in Inspector
+    var inspectorItems: [InspectorItem] = []
+
+    // MARK: - Private Streaming State
+
+    /// Index of the currently streaming thinking item in inspectorItems (nil when not inside a <think> block)
+    private var streamingThinkingIndex: Int?
+
+    /// Whether the current round's think block has been finalized (prevents duplicate processing)
+    private var thinkBlockFinalized = false
 
     // MARK: - Dependencies (injected after init)
 
@@ -83,18 +120,12 @@ class ChatViewModel {
         isStreaming = true
 
         Task {
-            // Determine if we have MCP tools available
             let hasMCPTools = mcpClientManager?.hasTools == true
-            print("[ChatVM] 🚀 Start | hasMCPTools=\(hasMCPTools) | toolCount=\(mcpClientManager?.allTools.count ?? 0)")
+            let toolSpecs = hasMCPTools ? mcpClientManager?.toolSpecs : nil
+            print("[ChatVM] 🚀 Start | hasMCPTools=\(hasMCPTools) | toolCount=\(mcpClientManager?.allTools.count ?? 0) | nativeTools=\(toolSpecs?.count ?? 0)")
 
-            // Build the initial message history (excluding the empty placeholder)
+            // Build the initial message history
             var history = buildHistory(hasMCPTools: hasMCPTools)
-            print("[ChatVM] 📋 History: \(history.count) messages | systemPrompt length=\(history.first(where: { $0.role == .system })?.content.count ?? 0)")
-            // Debug: print each message role and content preview
-            for (i, msg) in history.enumerated() {
-                let preview = String(msg.content.prefix(200))
-                print("[ChatVM] 📋 msg[\(i)] role=\(msg.role.rawValue) | length=\(msg.content.count) | preview: \(preview)")
-            }
 
             // Accumulates the final displayed text across all rounds
             var displayText = ""
@@ -103,85 +134,109 @@ class ChatViewModel {
             // Main inference loop: stream -> check for tool_call -> re-run if needed
             while toolCallRound < maxToolCallRounds {
                 print("[ChatVM] 🔄 Round \(toolCallRound) | Starting LLM inference...")
-                let stream = llm.chat(messages: history)
+                let stream = llm.chat(messages: history, tools: toolSpecs)
 
                 var accumulated = ""
+                var detectedToolCall: ToolCall?
                 var tokenCount = 0
-                for await token in stream {
-                    accumulated += token
-                    tokenCount += 1
-                    // Show the raw streaming output (including tool_call tags) in real time
-                    store.updateMessage(id: assistantID, in: convId, content: displayText + accumulated)
+                streamingThinkingIndex = nil
+                thinkBlockFinalized = false
+
+                for await chunk in stream {
+                    switch chunk {
+                    case .text(let token):
+                        accumulated += token
+                        tokenCount += 1
+                        // Update Inspector with real-time thinking
+                        updateInspectorStreaming(accumulated: accumulated)
+                        // Show only clean text in ChatView (strip <think> blocks in real-time)
+                        let cleanedSoFar = removeThinkBlock(from: displayText + accumulated)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        store.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
+                    case .toolCall(let tc):
+                        detectedToolCall = tc
+                        print("[ChatVM] 🔧 Native tool call detected: \(tc.function.name)")
+                    }
                 }
+
+                // Finalize any open thinking block
+                streamingThinkingIndex = nil
+
                 print("[ChatVM] ✅ Streaming done | tokens=\(tokenCount) | length=\(accumulated.count)")
-                print("[ChatVM] 📝 Raw output START >>>")
-                // Print full output in chunks to avoid console truncation
-                let rawOutput = accumulated
-                let chunkSize = 500
-                var offset = rawOutput.startIndex
-                while offset < rawOutput.endIndex {
-                    let end = rawOutput.index(offset, offsetBy: chunkSize, limitedBy: rawOutput.endIndex) ?? rawOutput.endIndex
-                    print(String(rawOutput[offset..<end]))
-                    offset = end
-                }
-                print("<<< Raw output END")
-                print("[ChatVM] 🔍 Contains ```tool: \(accumulated.contains("```tool")) | Contains <tool_call>: \(accumulated.contains("<tool_call>")) | Contains <think>: \(accumulated.contains("<think>"))")
+                print("[ChatVM] 🔍 nativeToolCall=\(detectedToolCall != nil) | Contains <think>: \(accumulated.contains("<think>"))")
 
-                // Check for a tool call in this round's output
-                if hasMCPTools, let toolCall = parseToolCall(from: accumulated) {
+                // Handle native tool call
+                if let toolCall = detectedToolCall {
                     toolCallRound += 1
-                    print("[ChatVM] 🔧 Tool call detected! name=\(toolCall.name) | round=\(toolCallRound)")
+                    let toolName = toolCall.function.name
+                    print("[ChatVM] 🔧 Executing tool '\(toolName)' | round=\(toolCallRound)")
 
-                    // Execute the tool
-                    currentToolCall = .calling(toolName: toolCall.name)
-                    print("[ChatVM] ⏳ Executing tool '\(toolCall.name)'...")
-                    let toolResult = await executeToolCall(toolCall)
-                    print("[ChatVM] 🔧 Tool result: success=\(toolResult.result != nil) | error=\(toolResult.error ?? "none")")
+                    // Record tool call in Inspector as "calling"
+                    let argsString = formatToolArguments(toolCall.function.arguments)
+                    let inspectorIndex = inspectorItems.count
+                    inspectorItems.append(InspectorItem(
+                        timestamp: Date(),
+                        content: .toolCall(name: toolName, arguments: argsString, status: .calling)
+                    ))
 
-                    // Clean tool_call tags from displayed text
-                    let cleaned = removeToolCallBlock(from: accumulated)
+                    currentToolCall = .calling(toolName: toolName)
+                    let toolResult = await executeNativeToolCall(toolCall)
+
+                    // Clean display: strip <think> blocks and tool call markers from accumulated text
+                    let cleaned = removeThinkBlock(from: accumulated)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     displayText += cleaned.isEmpty ? "" : cleaned + "\n\n"
                     store.updateMessage(id: assistantID, in: convId, content: displayText)
 
-                    // Build continuation messages for the next inference round
-                    history.append(ChatMessage(role: .assistant, content: accumulated))
+                    // Build continuation messages for next round (strip think blocks to prevent repetition)
+                    let cleanedForHistory = removeThinkBlock(from: accumulated)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    history.append(ChatMessage(role: .assistant, content: cleanedForHistory))
 
                     if let result = toolResult.result {
-                        currentToolCall = .completed(
-                            toolName: toolCall.name,
-                            result: String(result.prefix(200))
-                        )
+                        currentToolCall = .completed(toolName: toolName, result: String(result.prefix(200)))
+                        // Update Inspector item status to completed
+                        if inspectorIndex < inspectorItems.count {
+                            inspectorItems[inspectorIndex].content = .toolCall(
+                                name: toolName, arguments: argsString, status: .completed(result: String(result.prefix(500)))
+                            )
+                        }
                         print("[ChatVM] ✅ Tool success, result length=\(result.count)")
+                        // Use .system role for tool results (the model's chat template handles formatting)
                         history.append(ChatMessage(role: .system, content: """
-                            Tool '\(toolCall.name)' returned:
+                            Tool '\(toolName)' returned:
                             \(result)
 
                             Continue your response to the user based on this tool result.
                             """))
                     } else {
                         let errMsg = toolResult.error ?? "Unknown error"
-                        currentToolCall = .failed(toolName: toolCall.name, error: errMsg)
+                        currentToolCall = .failed(toolName: toolName, error: errMsg)
+                        // Update Inspector item status to failed
+                        if inspectorIndex < inspectorItems.count {
+                            inspectorItems[inspectorIndex].content = .toolCall(
+                                name: toolName, arguments: argsString, status: .failed(error: errMsg)
+                            )
+                        }
                         print("[ChatVM] ❌ Tool failed: \(errMsg)")
                         history.append(ChatMessage(role: .system, content: """
-                            Tool '\(toolCall.name)' failed: \(errMsg)
+                            Tool '\(toolName)' failed: \(errMsg)
                             Inform the user and continue without the tool.
                             """))
                     }
 
-                    // Continue loop for next inference round
                     print("[ChatVM] 🔄 Continuing to next round...")
                     continue
                 }
 
-                // No tool call — final answer
+                // No tool call — final answer (thinking already captured above)
                 print("[ChatVM] 💬 No tool call detected, finalizing response")
                 displayText += accumulated
                 break
             }
 
-            // Finalize: strip both <tool_call> and <think> blocks for clean display
-            let finalContent = removeThinkBlock(from: removeToolCallBlock(from: displayText))
+            // Finalize: strip <think> blocks for clean display
+            let finalContent = removeThinkBlock(from: displayText)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             store.updateMessage(id: assistantID, in: convId, content: finalContent)
             print("[ChatVM] 🏁 Done | final length=\(finalContent.count)")
@@ -195,6 +250,8 @@ class ChatViewModel {
                 }
             }
 
+            // Persist inspector items alongside the conversation
+            store.updateInspectorItems(inspectorItems, for: convId)
             store.saveConversation(id: convId)
             isStreaming = false
             currentToolCall = nil
@@ -208,141 +265,44 @@ class ChatViewModel {
 
     // MARK: - Build History
 
-    /// Build the chat history array for the LLM, optionally prepending MCP tool instructions.
+    /// Build the chat history array for the LLM, optionally prepending tool behavior instructions.
     private func buildHistory(hasMCPTools: Bool) -> [ChatMessage] {
         var history = messages
             .filter { $0.role != .system }
             .dropLast() // Exclude the empty assistant placeholder
             .map { $0 }
 
-        // Prepend tool system prompt if tools are available
+        // Prepend behavioral system prompt if tools are available
+        // (tool definitions are passed via native UserInput.tools, not in the prompt)
         if hasMCPTools,
-           let toolsPrompt = mcpClientManager?.toolsSystemPrompt,
-           !toolsPrompt.isEmpty {
-            history.insert(ChatMessage(role: .system, content: toolsPrompt), at: 0)
+           let behaviorPrompt = mcpClientManager?.toolBehaviorPrompt,
+           !behaviorPrompt.isEmpty {
+            history.insert(ChatMessage(role: .system, content: behaviorPrompt), at: 0)
         }
 
         return Array(history)
     }
 
-    // MARK: - Tool Call Parsing
+    // MARK: - Tool Call Execution
 
-    /// A parsed tool call extracted from LLM output
-    private struct ParsedToolCall {
-        let name: String
-        let arguments: [String: Value]?
-    }
-
-    /// Parse a <tool_call>{"name":...,"arguments":...}</tool_call> block from the LLM's response.
-    /// Parse a tool call from the LLM's response.
-    /// Supports two formats:
-    ///   1. ```tool\n{"name":...,"arguments":...}\n```  (markdown code fence)
-    ///   2. <tool_call>{"name":...}</tool_call>  (legacy XML, for models that use it natively)
-    /// Strips <think>...</think> blocks first so reasoning text doesn't interfere.
-    private func parseToolCall(from text: String) -> ParsedToolCall? {
-        // Strip <think> blocks first
-        var cleaned = text
-        while let start = cleaned.range(of: "<think>") {
-            if let end = cleaned.range(of: "</think>") {
-                cleaned.removeSubrange(start.lowerBound..<end.upperBound)
-            } else {
-                cleaned.removeSubrange(start.lowerBound..<cleaned.endIndex)
-            }
-        }
-
-        // Try format 1: ```tool\n{...}\n```
-        var jsonString: String?
-        if let startRange = cleaned.range(of: "```tool\n"),
-           let endRange = cleaned.range(of: "\n```", range: startRange.upperBound..<cleaned.endIndex) {
-            jsonString = String(cleaned[startRange.upperBound..<endRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // Try format 2: <tool_call>{...}</tool_call> (native Hermes format)
-        else if let startRange = cleaned.range(of: "<tool_call>"),
-                let endRange = cleaned.range(of: "</tool_call>") {
-            jsonString = String(cleaned[startRange.upperBound..<endRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        guard let json = jsonString, let jsonData = json.data(using: .utf8) else {
-            return nil
+    /// Execute a native MLX ToolCall via MCPClientManager
+    private func executeNativeToolCall(_ toolCall: ToolCall) async -> (result: String?, error: String?) {
+        guard let mcpClient = mcpClientManager else {
+            return (nil, "MCP client manager not available")
         }
 
         do {
-            guard let dict = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                  let name = dict["name"] as? String else {
-                return nil
-            }
-
-            var mcpArguments: [String: Value]? = nil
-            if let args = dict["arguments"] as? [String: Any] {
-                mcpArguments = try convertToMCPValues(args)
-            }
-
-            return ParsedToolCall(name: name, arguments: mcpArguments)
+            let result = try await mcpClient.callToolFromNative(
+                name: toolCall.function.name,
+                arguments: toolCall.function.arguments
+            )
+            return (result, nil)
         } catch {
-            print("[ChatViewModel] Failed to parse tool call: \(error)")
-            return nil
+            return (nil, error.localizedDescription)
         }
     }
 
-    /// Convert [String: Any] to MCP SDK's [String: Value]
-    private func convertToMCPValues(_ dict: [String: Any]) throws -> [String: Value] {
-        var result: [String: Value] = [:]
-        for (key, val) in dict {
-            result[key] = try convertAnyToValue(val)
-        }
-        return result
-    }
-
-    /// Convert a single Foundation object to MCP Value
-    private func convertAnyToValue(_ val: Any) throws -> Value {
-        switch val {
-        case let s as String:
-            return .string(s)
-        case let n as NSNumber:
-            if CFGetTypeID(n) == CFBooleanGetTypeID() {
-                return .bool(n.boolValue)
-            } else if n.doubleValue == Double(n.intValue) {
-                return .int(n.intValue)
-            } else {
-                return .double(n.doubleValue)
-            }
-        case let arr as [Any]:
-            return .array(try arr.map { try convertAnyToValue($0) })
-        case let dict as [String: Any]:
-            return .object(try convertToMCPValues(dict))
-        case is NSNull:
-            return .null
-        default:
-            return .string(String(describing: val))
-        }
-    }
-
-    /// Remove all tool call blocks from text for clean display.
-    /// Handles both ```tool\n...\n``` and <tool_call>...</tool_call> formats.
-    private func removeToolCallBlock(from text: String) -> String {
-        var result = text
-        // Remove ```tool\n...\n``` blocks
-        while let start = result.range(of: "```tool\n") {
-            if let end = result.range(of: "\n```", range: start.upperBound..<result.endIndex) {
-                // Remove including the closing ```
-                let removeEnd = result.index(end.upperBound, offsetBy: 0)
-                result.removeSubrange(start.lowerBound..<removeEnd)
-            } else {
-                result.removeSubrange(start.lowerBound..<result.endIndex)
-            }
-        }
-        // Remove <tool_call>...</tool_call> blocks (legacy/native format)
-        while let start = result.range(of: "<tool_call>") {
-            if let end = result.range(of: "</tool_call>") {
-                result.removeSubrange(start.lowerBound..<end.upperBound)
-            } else {
-                result.removeSubrange(start.lowerBound..<result.endIndex)
-            }
-        }
-        return result
-    }
+    // MARK: - Text Cleanup
 
     /// Remove all <think>...</think> blocks from text for clean display
     private func removeThinkBlock(from text: String) -> String {
@@ -355,22 +315,6 @@ class ChatViewModel {
             }
         }
         return result
-    }
-
-    // MARK: - Tool Call Execution
-
-    /// Execute a parsed tool call via MCPClientManager
-    private func executeToolCall(_ toolCall: ParsedToolCall) async -> (result: String?, error: String?) {
-        guard let mcpClient = mcpClientManager else {
-            return (nil, "MCP client manager not available")
-        }
-
-        do {
-            let result = try await mcpClient.callTool(name: toolCall.name, arguments: toolCall.arguments)
-            return (result, nil)
-        } catch {
-            return (nil, error.localizedDescription)
-        }
     }
 
     // MARK: - Stop Generation
@@ -387,6 +331,78 @@ class ChatViewModel {
         isStreaming = false
         inputText = ""
         currentToolCall = nil
+        streamingThinkingIndex = nil
+        thinkBlockFinalized = false
+
+        // Load persisted inspector items for the selected conversation
+        inspectorItems = chatStore?.currentConversation?.inspectorItems ?? []
+    }
+
+    // MARK: - Inspector Helpers
+
+    /// Update Inspector in real-time during streaming to show thinking content as it arrives.
+    /// Called after each token; detects open/closed <think> blocks in the accumulated text.
+    private func updateInspectorStreaming(accumulated: String) {
+        // Once this round's think block is finalized, skip re-processing
+        if thinkBlockFinalized { return }
+        guard let thinkStart = accumulated.range(of: "<think>") else { return }
+
+        let afterThink = accumulated[thinkStart.upperBound...]
+
+        if let thinkEnd = afterThink.range(of: "</think>") {
+            // Think block is complete — finalize and stop tracking
+            let content = String(afterThink[..<thinkEnd.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let index = streamingThinkingIndex, index < inspectorItems.count {
+                if content.isEmpty {
+                    // Empty think block — remove the placeholder item
+                    inspectorItems.remove(at: index)
+                } else {
+                    inspectorItems[index].content = .thinking(content)
+                }
+            }
+            streamingThinkingIndex = nil
+            thinkBlockFinalized = true
+        } else {
+            // Think block still open — streaming in progress
+            let content = String(afterThink)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let index = streamingThinkingIndex, index < inspectorItems.count {
+                // Update existing streaming item
+                inspectorItems[index].content = .thinking(content.isEmpty ? "…" : content)
+            } else {
+                // Create new streaming thinking item
+                streamingThinkingIndex = inspectorItems.count
+                inspectorItems.append(InspectorItem(
+                    timestamp: Date(),
+                    content: .thinking(content.isEmpty ? "…" : content)
+                ))
+            }
+        }
+    }
+
+    /// Format tool call arguments dictionary into a readable string
+    private func formatToolArguments(_ arguments: [String: MLXLMCommon.JSONValue]) -> String {
+        // Convert JSONValue to native types for JSONSerialization
+        let native = arguments.mapValues { jsonValueToNative($0) }
+        guard let data = try? JSONSerialization.data(withJSONObject: native, options: [.prettyPrinted, .sortedKeys]),
+              let str = String(data: data, encoding: .utf8) else {
+            return String(describing: arguments)
+        }
+        return str
+    }
+
+    /// Convert MLXLMCommon.JSONValue to Foundation-compatible type for serialization
+    private func jsonValueToNative(_ val: MLXLMCommon.JSONValue) -> Any {
+        switch val {
+        case .null: return NSNull()
+        case .bool(let b): return b
+        case .int(let i): return i
+        case .double(let d): return d
+        case .string(let s): return s
+        case .array(let arr): return arr.map { jsonValueToNative($0) }
+        case .object(let obj): return obj.mapValues { jsonValueToNative($0) }
+        }
     }
 
     // MARK: - AI Title Generation
@@ -408,19 +424,14 @@ class ChatViewModel {
         let stream = llm.chat(messages: [ChatMessage(role: .user, content: prompt)])
 
         var raw = ""
-        for await token in stream {
-            raw += token
+        for await chunk in stream {
+            if case .text(let token) = chunk {
+                raw += token
+            }
         }
 
         // Strip <think>...</think> blocks
-        var title = raw
-        while let start = title.range(of: "<think>") {
-            if let end = title.range(of: "</think>") {
-                title.removeSubrange(start.lowerBound..<end.upperBound)
-            } else {
-                title.removeSubrange(start.lowerBound..<title.endIndex)
-            }
-        }
+        var title = removeThinkBlock(from: raw)
 
         // Clean up
         title = title.trimmingCharacters(in: .whitespacesAndNewlines)

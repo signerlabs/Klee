@@ -12,6 +12,12 @@ import Observation
 import MLXLLM
 @preconcurrency import MLXLMCommon
 
+/// A single piece of generation output — either a text chunk or a tool call.
+enum GenerationChunk: Sendable {
+    case text(String)
+    case toolCall(ToolCall)
+}
+
 @Observable
 class LLMService {
 
@@ -137,10 +143,13 @@ class LLMService {
 
     // MARK: - Streaming Chat
 
-    /// Send chat messages and return a streaming token output
-    /// - Parameter messages: Complete conversation history
-    /// - Returns: Async string stream where each element is a token fragment
-    func chat(messages: [ChatMessage]) -> AsyncStream<String> {
+    /// Send chat messages with optional tool definitions and return a streaming output.
+    /// Each element is either a text chunk or a native tool call detected by the model.
+    /// - Parameters:
+    ///   - messages: Complete conversation history
+    ///   - tools: Optional tool specifications for native tool calling
+    /// - Returns: Async stream of GenerationChunk
+    func chat(messages: [ChatMessage], tools: [[String: any Sendable]]? = nil) -> AsyncStream<GenerationChunk> {
         AsyncStream { continuation in
             generationTask = Task { [weak self] in
                 guard let self, let container = self.modelContainer else {
@@ -161,7 +170,7 @@ class LLMService {
                         }
                     }
 
-                    let userInput = UserInput(chat: chatMessages)
+                    let userInput = UserInput(chat: chatMessages, tools: tools)
 
                     // Prepare input (UserInput -> LMInput)
                     let lmInput = try await container.prepare(input: userInput)
@@ -181,10 +190,12 @@ class LLMService {
                     for await result in generateStream {
                         if Task.isCancelled { break }
 
-                        // result contains the generated text fragment
                         if let text = result.chunk {
-                            continuation.yield(text)
+                            continuation.yield(.text(text))
                             tokenCount += 1
+                        }
+                        if let toolCall = result.toolCall {
+                            continuation.yield(.toolCall(toolCall))
                         }
                     }
 

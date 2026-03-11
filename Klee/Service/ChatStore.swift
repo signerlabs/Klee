@@ -153,6 +153,12 @@ class ChatStore {
         return emptyIds
     }
 
+    /// Update inspector items for a conversation (in-memory only; call saveConversation to persist)
+    func updateInspectorItems(_ items: [InspectorItem], for conversationId: UUID) {
+        guard let idx = conversations.firstIndex(where: { $0.id == conversationId }) else { return }
+        conversations[idx].inspectorItems = items
+    }
+
     /// Save the current state of a conversation to disk
     func saveConversation(id: UUID) {
         guard let conversation = conversations.first(where: { $0.id == id }) else { return }
