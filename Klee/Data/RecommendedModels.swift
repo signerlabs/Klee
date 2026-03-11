@@ -14,30 +14,7 @@ extension ModelInfo {
     /// expectedBytes is an estimated download size for progress bar calculation (does not need to be exact)
     static let recommended: [ModelInfo] = [
 
-        // 8GB devices
-        ModelInfo(
-            id: "mlx-community/gemma-3-4b-it-qat-4bit",
-            name: "Gemma 3 4B",
-            size: "~3 GB",
-            minRAM: 8,
-            expectedBytes: 3_000_000_000
-        ),
-        ModelInfo(
-            id: "mlx-community/Qwen3-4B-4bit",
-            name: "Qwen3 4B",
-            size: "~2.5 GB",
-            minRAM: 8,
-            expectedBytes: 2_500_000_000
-        ),
-        ModelInfo(
-            id: "mlx-community/Phi-4-mini-instruct-4bit",
-            name: "Phi 4 Mini",
-            size: "~2.2 GB",
-            minRAM: 8,
-            expectedBytes: 2_200_000_000
-        ),
-
-        // 16GB devices
+        // 16GB devices (minimum for MCP tool calling)
         ModelInfo(
             id: "mlx-community/Qwen3-8B-4bit",
             name: "Qwen3 8B",

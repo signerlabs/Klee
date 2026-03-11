@@ -37,6 +37,11 @@ struct SettingsView: View {
                     ModelManagerView()
                 }
 
+                // MARK: - MCP Servers Section
+                Section("MCP Servers") {
+                    MCPServerListView()
+                }
+
                 // MARK: - About Section
                 Section("About Klee") {
                     LabeledContent {
@@ -164,4 +169,6 @@ private struct ShipSwiftApp: Identifiable {
         .environment(ModelManager())
         .environment(LLMService())
         .environment(DownloadManager())
+        .environment(MCPServerStore())
+        .environment(MCPServerManager())
 }

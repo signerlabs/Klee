@@ -42,12 +42,106 @@ private struct ThinkingBlock: View {
     }
 }
 
+// MARK: - Tool Call Bubble
+
+/// Renders an MCP tool call block with status indicator and collapsible detail.
+private struct ToolCallBubble: View {
+    let toolName: String
+    let arguments: String
+    let result: String
+    let status: ToolCallDisplayStatus
+
+    @State private var isExpanded = false
+
+    enum ToolCallDisplayStatus {
+        case calling
+        case completed
+        case failed
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Header row: icon + tool name + status
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    statusIcon
+                    Text(toolName)
+                        .fontWeight(.medium)
+                        .fontDesign(.monospaced)
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            // Collapsible detail section
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !arguments.isEmpty {
+                        Text("Arguments")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .textCase(.uppercase)
+                        Text(arguments)
+                            .font(.caption)
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    if !result.isEmpty {
+                        Divider()
+                        Text(status == .failed ? "Error" : "Result")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .textCase(.uppercase)
+                        Text(result)
+                            .font(.caption)
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(status == .failed ? .red : .secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(isExpanded ? nil : 3)
+                    }
+                }
+                .padding(.leading, 22)
+            }
+        }
+        .font(.callout)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch status {
+        case .calling:
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 16, height: 16)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+        }
+    }
+}
+
 // MARK: - ChatView
 
 struct ChatView: View {
     @Environment(LLMService.self) var llmService
     @Environment(ModelManager.self) var modelManager
     @Environment(ChatStore.self) var chatStore
+    @Environment(MCPClientManager.self) var mcpClientManager
     @Environment(\.openSettings) private var openSettings
     @State private var viewModel = ChatViewModel()
     @FocusState private var isInputFocused: Bool
@@ -72,6 +166,10 @@ struct ChatView: View {
                 errorBanner(message: errorMessage)
             }
             messageList
+            // Active tool call status indicator
+            if let toolCall = viewModel.currentToolCall {
+                activeToolCallBar(toolCall)
+            }
             Divider()
             inputBar
         }
@@ -79,6 +177,7 @@ struct ChatView: View {
         .onAppear {
             viewModel.llmService = llmService
             viewModel.chatStore = chatStore
+            viewModel.mcpClientManager = mcpClientManager
         }
         .onChange(of: chatStore.selectedConversationId) {
             viewModel.resetForNewConversation()
@@ -262,7 +361,7 @@ struct ChatView: View {
     @ViewBuilder
     private func assistantBubbleContent(_ content: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(parseThinkSegments(content).enumerated()), id: \.offset) { _, segment in
+            ForEach(Array(parseContentSegments(content).enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .text(let text):
                     MarkdownTextView(text: text)
@@ -270,37 +369,143 @@ struct ChatView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 case .think(let text):
                     ThinkingBlock(text: text)
+                case .toolCall(let name, let arguments, let result, let failed):
+                    ToolCallBubble(
+                        toolName: name,
+                        arguments: arguments,
+                        result: result,
+                        status: failed ? .failed : (result.isEmpty ? .calling : .completed)
+                    )
                 }
             }
         }
     }
 
-    private enum ContentSegment { case text(String); case think(String) }
+    private enum ContentSegment {
+        case text(String)
+        case think(String)
+        case toolCall(name: String, arguments: String, result: String, failed: Bool)
+    }
 
-    private func parseThinkSegments(_ content: String) -> [ContentSegment] {
+    /// Parses assistant message content into segments: plain text, <think> blocks, and <tool_call> blocks.
+    /// Tool call format: <tool_call>name|arguments|result</tool_call> or <tool_call_error>name|arguments|error</tool_call_error>
+    private func parseContentSegments(_ content: String) -> [ContentSegment] {
         var segments: [ContentSegment] = []
         var remaining = content
+
         while !remaining.isEmpty {
-            if let startRange = remaining.range(of: "<think>") {
-                let before = String(remaining[..<startRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !before.isEmpty { segments.append(.text(before)) }
-                let afterStart = String(remaining[startRange.upperBound...])
-                if let endRange = afterStart.range(of: "</think>") {
-                    let thinkContent = String(afterStart[..<endRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !thinkContent.isEmpty { segments.append(.think(thinkContent)) }
-                    remaining = String(afterStart[endRange.upperBound...])
-                } else {
-                    let thinkContent = afterStart.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !thinkContent.isEmpty { segments.append(.think(thinkContent)) }
-                    remaining = ""
-                }
-            } else {
+            // Find the nearest special tag
+            let thinkRange = remaining.range(of: "<think>")
+            let toolCallRange = remaining.range(of: "<tool_call>")
+            let toolErrorRange = remaining.range(of: "<tool_call_error>")
+
+            // Determine which tag comes first
+            let candidates: [(Range<String.Index>, String)] = [
+                thinkRange.map { ($0, "think") },
+                toolCallRange.map { ($0, "tool_call") },
+                toolErrorRange.map { ($0, "tool_call_error") },
+            ].compactMap { $0 }
+
+            guard let nearest = candidates.min(by: { $0.0.lowerBound < $1.0.lowerBound }) else {
+                // No more tags -- rest is plain text
                 let text = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty { segments.append(.text(text)) }
-                remaining = ""
+                break
+            }
+
+            // Capture text before the tag
+            let before = String(remaining[..<nearest.0.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !before.isEmpty { segments.append(.text(before)) }
+
+            let afterStart = String(remaining[nearest.0.upperBound...])
+
+            switch nearest.1 {
+            case "think":
+                if let endRange = afterStart.range(of: "</think>") {
+                    let inner = String(afterStart[..<endRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !inner.isEmpty { segments.append(.think(inner)) }
+                    remaining = String(afterStart[endRange.upperBound...])
+                } else {
+                    let inner = afterStart.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !inner.isEmpty { segments.append(.think(inner)) }
+                    remaining = ""
+                }
+
+            case "tool_call":
+                if let endRange = afterStart.range(of: "</tool_call>") {
+                    let inner = String(afterStart[..<endRange.lowerBound])
+                    let parsed = parseToolCallContent(inner, failed: false)
+                    segments.append(parsed)
+                    remaining = String(afterStart[endRange.upperBound...])
+                } else {
+                    // Unclosed -- treat as in-progress tool call
+                    let parsed = parseToolCallContent(afterStart, failed: false)
+                    segments.append(parsed)
+                    remaining = ""
+                }
+
+            case "tool_call_error":
+                if let endRange = afterStart.range(of: "</tool_call_error>") {
+                    let inner = String(afterStart[..<endRange.lowerBound])
+                    let parsed = parseToolCallContent(inner, failed: true)
+                    segments.append(parsed)
+                    remaining = String(afterStart[endRange.upperBound...])
+                } else {
+                    let parsed = parseToolCallContent(afterStart, failed: true)
+                    segments.append(parsed)
+                    remaining = ""
+                }
+
+            default:
+                remaining = afterStart
             }
         }
+
         return segments
+    }
+
+    /// Parse tool call inner content. Expected format: "name|arguments|result" (pipe-separated).
+    private func parseToolCallContent(_ raw: String, failed: Bool) -> ContentSegment {
+        let parts = raw.split(separator: "|", maxSplits: 2).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        let name = parts.indices.contains(0) ? parts[0] : "Unknown Tool"
+        let arguments = parts.indices.contains(1) ? parts[1] : ""
+        let result = parts.indices.contains(2) ? parts[2] : ""
+        return .toolCall(name: name, arguments: arguments, result: result, failed: failed)
+    }
+
+    // MARK: - Active Tool Call Bar
+
+    /// Shows the currently executing tool call above the input bar
+    private func activeToolCallBar(_ state: ChatViewModel.ToolCallState) -> some View {
+        HStack(spacing: 8) {
+            switch state {
+            case .calling(let toolName):
+                ProgressView()
+                    .controlSize(.small)
+                Text("Calling \(toolName)...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .completed(let toolName, _):
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .imageScale(.small)
+                Text("\(toolName) completed")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .failed(let toolName, let error):
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                    .imageScale(.small)
+                Text("\(toolName) failed: \(error)")
+                    .font(.caption)
+                    .foregroundStyle(.red.opacity(0.8))
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
     }
 
     // MARK: - Input Bar
