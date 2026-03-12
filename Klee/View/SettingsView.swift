@@ -69,11 +69,7 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var connectorsContent: some View {
-        Section {
-            MCPServerListView()
-        } footer: {
-            Text("Connectors let Klee talk to external tools and services — like browsing the web, reading files, or querying databases. Each connector is a small plugin (called an MCP server) that gives the AI new abilities beyond just chatting.")
-        }
+        MCPServerListView()
     }
 
     // MARK: - Models Panel

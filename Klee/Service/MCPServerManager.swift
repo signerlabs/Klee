@@ -29,6 +29,13 @@ class MCPServerManager {
     /// Maps server UUID to its current runtime status
     var serverStatuses: [UUID: MCPServerStatus] = [:]
 
+    /// Download progress for servers that need first-time setup (e.g. Playwright Chromium).
+    /// Value range: 0.0 to 1.0. Nil means no download in progress.
+    var downloadProgress: [UUID: Double] = [:]
+
+    /// Human-readable download status text (e.g. "Downloading Chrome... 45%")
+    var downloadStatusText: [UUID: String] = [:]
+
     // MARK: - Private State
 
     /// Active subprocesses keyed by server ID
@@ -140,13 +147,19 @@ class MCPServerManager {
             self.stdoutPipes[server.id] = stdoutPipe
             self.processes[server.id] = process
 
-            // Log stderr output for debugging
+            // Log stderr output and parse download progress
             let serverId = server.id
             let serverName = server.name
-            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
                     print("[MCP:\(serverName)] stderr: \(text)")
+
+                    // Parse Playwright Chromium download progress from stderr.
+                    // Format: "|■■■■■■■■              |  10% of 162.3 MiB"
+                    Task { @MainActor [weak self] in
+                        self?.parseDownloadProgress(text, serverId: serverId)
+                    }
                 }
             }
 
@@ -266,6 +279,47 @@ class MCPServerManager {
     func cleanupTransportPipes(for id: UUID) {
         stdinPipes[id] = nil
         stdoutPipes[id] = nil
+    }
+
+    // MARK: - Download Progress Parsing
+
+    /// Parse Playwright's stderr output for Chromium download progress.
+    /// Expected patterns:
+    ///   "Downloading Chrome for Testing 145.0.7632.6 ..."  → sets status text
+    ///   "|■■■■■■■■                |  10% of 162.3 MiB"     → extracts percentage
+    private func parseDownloadProgress(_ text: String, serverId: UUID) {
+        let lines = text.components(separatedBy: .newlines)
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Detect download start
+            if trimmed.hasPrefix("Downloading") {
+                downloadStatusText[serverId] = "Setting up browser..."
+                downloadProgress[serverId] = 0.0
+                continue
+            }
+
+            // Parse percentage from progress bar line: "| ... |  45% of 162.3 MiB"
+            if trimmed.contains("%") {
+                if let range = trimmed.range(of: #"(\d+)%"#, options: .regularExpression) {
+                    let match = trimmed[range].dropLast() // remove the '%'
+                    if let percent = Double(match) {
+                        downloadProgress[serverId] = min(percent / 100.0, 1.0)
+                        downloadStatusText[serverId] = "Setting up browser... \(Int(percent))%"
+
+                        // Download complete — clear progress after a short delay
+                        if percent >= 100 {
+                            Task {
+                                try? await Task.sleep(for: .seconds(1))
+                                self.downloadProgress.removeValue(forKey: serverId)
+                                self.downloadStatusText.removeValue(forKey: serverId)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
 }

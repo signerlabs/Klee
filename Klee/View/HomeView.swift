@@ -140,10 +140,6 @@ struct HomeView: View {
                 Text("This conversation will be permanently deleted.")
             }
 
-            Divider()
-                .padding(.horizontal, 8)
-                .padding(.top, 8)
-
             // Settings menu at bottom
             Menu {
                 Button {
@@ -176,7 +172,7 @@ struct HomeView: View {
                 .contentShape(.rect)
             }
             .menuStyle(.button)
-            .sidebarHoverButton()
+            .sidebarHoverButton(cornerRadius: 20)
         }
     }
 

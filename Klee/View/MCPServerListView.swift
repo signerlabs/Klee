@@ -2,7 +2,9 @@
 //  MCPServerListView.swift
 //  Klee
 //
-//  Displays configured MCP servers with status indicators, toggle, and delete.
+//  Displays configured MCP servers split into Built-in and Custom sections.
+//  Built-in connectors show toggle only (no edit/delete).
+//  Custom connectors retain full edit/delete capabilities.
 //  Embedded inside SettingsView's Form.
 //
 
@@ -18,70 +20,140 @@ struct MCPServerListView: View {
     @State private var showDeleteConfirm = false
 
     var body: some View {
-        @Bindable var store = store
+        builtInSection
+        customSection
+            .sheet(isPresented: $showAddSheet) {
+                MCPServerEditView(mode: .create) { newServer in
+                    store.add(server: newServer)
+                }
+            }
+            .sheet(item: $editingServer) { server in
+                MCPServerEditView(mode: .edit(server)) { updated in
+                    store.update(server: updated)
+                }
+            }
+            .alert("Delete Server", isPresented: $showDeleteConfirm, presenting: serverToDelete) { server in
+                Button("Delete", role: .destructive) {
+                    manager.stop(id: server.id)
+                    store.delete(id: server.id)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { server in
+                Text("Remove \"\(server.name)\" from your MCP servers? This cannot be undone.")
+            }
+    }
 
-        if store.servers.isEmpty {
-            emptyState
-        } else {
-            serverList
-        }
+    // MARK: - Built-in Section
 
-        // Add Server button
-        Button {
-            showAddSheet = true
-        } label: {
-            Label("Add Connector", systemImage: "plus")
-        }
-        .sheet(isPresented: $showAddSheet) {
-            MCPServerEditView(mode: .create) { newServer in
-                store.add(server: newServer)
+    @ViewBuilder
+    private var builtInSection: some View {
+        Section("Built-in") {
+            ForEach(store.builtInServers) { server in
+                builtInRow(server)
             }
-        }
-        .sheet(item: $editingServer) { server in
-            MCPServerEditView(mode: .edit(server)) { updated in
-                store.update(server: updated)
-            }
-        }
-        .alert("Delete Server", isPresented: $showDeleteConfirm, presenting: serverToDelete) { server in
-            Button("Delete", role: .destructive) {
-                manager.stop(id: server.id)
-                store.delete(id: server.id)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { server in
-            Text("Remove \"\(server.name)\" from your MCP servers? This cannot be undone.")
         }
     }
 
-    // MARK: - Empty State
+    // MARK: - Custom Section
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "server.rack")
-                .font(.title2)
-                .foregroundStyle(.quaternary)
-            Text("No MCP servers configured")
-                .font(.subheadline)
+    @ViewBuilder
+    private var customSection: some View {
+        Section {
+            if store.customServers.isEmpty {
+                customEmptyState
+            } else {
+                ForEach(store.customServers) { server in
+                    customRow(server)
+                }
+            }
+
+            // Add Connector button
+            Button {
+                showAddSheet = true
+            } label: {
+                Label("Add Connector", systemImage: "plus")
+            }
+        } header: {
+            Text("Custom")
+        } footer: {
+            Text("Connectors let Klee talk to external tools and services — like browsing the web, reading files, or querying databases. Each connector is a small plugin (called an MCP server) that gives the AI new abilities beyond just chatting.")
+        }
+    }
+
+    // MARK: - Built-in Row
+
+    private func builtInRow(_ server: MCPServerConfig) -> some View {
+        let status = manager.status(for: server.id)
+        let definition = BuiltInConnector.find(by: server.id)
+        let progress = manager.downloadProgress[server.id]
+        let progressText = manager.downloadStatusText[server.id]
+
+        return HStack(spacing: 10) {
+            // Icon
+            Image(systemName: definition?.icon ?? "puzzlepiece.extension")
                 .foregroundStyle(.secondary)
-            Text("Add one to enable Agent capabilities.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .frame(width: 20)
+
+            // Server info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.name)
+                    .fontWeight(.medium)
+
+                // Show download progress or normal description
+                if let progressText {
+                    HStack(spacing: 6) {
+                        ProgressView(value: progress ?? 0)
+                            .progressViewStyle(.linear)
+                            .frame(maxWidth: 120)
+                        Text(progressText)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text(definition?.description ?? server.command)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                // Error indicator
+                if case .error(let msg) = status {
+                    Text(msg)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            // Status dot (only when enabled)
+            if server.isEnabled {
+                statusDot(status)
+            }
+
+            // Toggle (the only control for built-in connectors)
+            Toggle("", isOn: Binding(
+                get: { server.isEnabled },
+                set: { newValue in
+                    store.toggleBuiltIn(id: server.id, enabled: newValue)
+
+                    if newValue {
+                        Task { await manager.start(server: server) }
+                    } else {
+                        manager.stop(id: server.id)
+                    }
+                }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .controlSize(.small)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .contentShape(Rectangle())
     }
 
-    // MARK: - Server List
+    // MARK: - Custom Row
 
-    private var serverList: some View {
-        ForEach(store.servers) { server in
-            serverRow(server)
-        }
-    }
-
-    // MARK: - Server Row
-
-    private func serverRow(_ server: MCPServerConfig) -> some View {
+    private func customRow(_ server: MCPServerConfig) -> some View {
         let status = manager.status(for: server.id)
 
         return HStack(spacing: 10) {
@@ -151,6 +223,21 @@ struct MCPServerListView: View {
         .contentShape(Rectangle())
     }
 
+    // MARK: - Custom Empty State
+
+    private var customEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("No custom connectors yet.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Add third-party MCP servers to extend Klee's capabilities.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+    }
+
     // MARK: - Status Dot
 
     private func statusDot(_ status: MCPServerManager.MCPServerStatus) -> some View {
@@ -180,12 +267,10 @@ struct MCPServerListView: View {
 
 #Preview {
     Form {
-        Section("MCP Servers") {
-            MCPServerListView()
-        }
+        MCPServerListView()
     }
     .formStyle(.grouped)
     .environment(MCPServerStore())
     .environment(MCPServerManager())
-    .frame(width: 540, height: 400)
+    .frame(width: 540, height: 500)
 }
