@@ -10,6 +10,7 @@
 		9B252D1A2F5F000000000001 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9B252D1B2F5F000000000001 /* MLXLLM */; };
 		9B252D1C2F5F000000000002 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9B252D1D2F5F000000000002 /* MLXLMCommon */; };
 		9B252EB72F603F1A00DDD7B5 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = 9B252EB62F603F1A00DDD7B5 /* MCP */; };
+		9BB1FE542F6535A800616248 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9BB1FE532F6535A800616248 /* MLXVLM */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -2243,6 +2244,7 @@
 			files = (
 				9B252EB72F603F1A00DDD7B5 /* MCP in Frameworks */,
 				9B252D1A2F5F000000000001 /* MLXLLM in Frameworks */,
+				9BB1FE542F6535A800616248 /* MLXVLM in Frameworks */,
 				9B252D1C2F5F000000000002 /* MLXLMCommon in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -2254,6 +2256,7 @@
 			isa = PBXGroup;
 			children = (
 				9B252CE62F5EE71200DDD7B5 /* Klee */,
+				9BB1FE522F6535A800616248 /* Frameworks */,
 				9B252CE52F5EE71200DDD7B5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -2264,6 +2267,13 @@
 				9B252CE42F5EE71200DDD7B5 /* Klee.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		9BB1FE522F6535A800616248 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -2290,6 +2300,7 @@
 				9B252D1B2F5F000000000001 /* MLXLLM */,
 				9B252D1D2F5F000000000002 /* MLXLMCommon */,
 				9B252EB62F603F1A00DDD7B5 /* MCP */,
+				9BB1FE532F6535A800616248 /* MLXVLM */,
 			);
 			productName = Klee;
 			productReference = 9B252CE42F5EE71200DDD7B5 /* Klee.app */;
@@ -2591,8 +2602,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.30.0;
+				branch = main;
+				kind = branch;
 			};
 		};
 		9B252EB52F603F1A00DDD7B5 /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
@@ -2620,6 +2631,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 9B252EB52F603F1A00DDD7B5 /* XCRemoteSwiftPackageReference "swift-sdk" */;
 			productName = MCP;
+		};
+		9BB1FE532F6535A800616248 /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9B252D1E2F5F000000000003 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

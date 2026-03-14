@@ -10,6 +10,7 @@
 import Foundation
 import Observation
 import MLXLLM
+import MLXVLM
 @preconcurrency import MLXLMCommon
 
 /// A single piece of generation output — either a text chunk or a tool call.
@@ -104,7 +105,9 @@ class LLMService {
                 ? ModelConfiguration(directory: localURL)
                 : ModelConfiguration(id: id)
 
-            let container = try await LLMModelFactory.shared.loadContainer(
+            // Use the unified loadModelContainer() which tries MLXVLM first, then MLXLLM.
+            // This ensures VLM models (e.g. Qwen 3.5) are loaded with vision support.
+            let container = try await loadModelContainer(
                 configuration: configuration
             ) { [weak self] progress in
                 Task { @MainActor [weak self] in
@@ -148,8 +151,9 @@ class LLMService {
     /// - Parameters:
     ///   - messages: Complete conversation history
     ///   - tools: Optional tool specifications for native tool calling
+    ///   - images: Optional images to attach to the latest user message (for VLM inference)
     /// - Returns: Async stream of GenerationChunk
-    func chat(messages: [ChatMessage], tools: [[String: any Sendable]]? = nil) -> AsyncStream<GenerationChunk> {
+    func chat(messages: [ChatMessage], tools: [[String: any Sendable]]? = nil, images: [UserInput.Image] = []) -> AsyncStream<GenerationChunk> {
         AsyncStream { continuation in
             generationTask = Task { [weak self] in
                 guard let self, let container = self.modelContainer else {
@@ -161,12 +165,16 @@ class LLMService {
                 self.tokensPerSecond = 0
 
                 do {
-                    // Build MLX Chat.Message array
-                    let chatMessages: [Chat.Message] = messages.map { msg in
+                    // Build MLX Chat.Message array, attaching images to the last user message
+                    let chatMessages: [Chat.Message] = messages.enumerated().map { index, msg in
+                        let isLastUser = (msg.role == .user && index == messages.lastIndex(where: { $0.role == .user }))
                         switch msg.role {
-                        case .user: .user(msg.content)
-                        case .assistant: .assistant(msg.content)
-                        case .system: .system(msg.content)
+                        case .user:
+                            return .user(msg.content, images: isLastUser ? images : [])
+                        case .assistant:
+                            return .assistant(msg.content)
+                        case .system:
+                            return .system(msg.content)
                         }
                     }
 

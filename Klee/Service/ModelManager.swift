@@ -57,12 +57,18 @@ class ModelManager {
         var cached = Set<String>()
         let fm = FileManager.default
 
-        // Iterate recommended models, check if directory exists and contains safetensors files
+        // Iterate recommended models, check if directory exists and contains non-empty safetensors files
         for model in ModelInfo.recommended {
             let modelDir = cacheDirectory(for: model.id)
             if fm.fileExists(atPath: modelDir.path) {
                 if let files = try? fm.contentsOfDirectory(atPath: modelDir.path),
-                   files.contains(where: { $0.hasSuffix(".safetensors") }) {
+                   files.contains(where: { name in
+                       guard name.hasSuffix(".safetensors") else { return false }
+                       let fileURL = modelDir.appendingPathComponent(name)
+                       let attrs = try? fm.attributesOfItem(atPath: fileURL.path)
+                       let size = attrs?[.size] as? Int64 ?? 0
+                       return size > 0
+                   }) {
                     cached.insert(model.id)
                 }
             }

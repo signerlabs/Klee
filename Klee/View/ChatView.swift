@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - ChatView
 
@@ -270,12 +271,20 @@ struct ChatView: View {
         case .user:
             HStack {
                 Spacer(minLength: 60)
-                Text(message.content)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .foregroundStyle(.white)
-                    .background(.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .trailing, spacing: 6) {
+                    // Show attached images if any
+                    if !message.imageURLs.isEmpty {
+                        messageImages(urls: message.imageURLs)
+                    }
+                    if !message.content.isEmpty {
+                        Text(message.content)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(8)
+                .foregroundStyle(.white)
+                .background(.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
         case .assistant:
@@ -310,6 +319,19 @@ struct ChatView: View {
 
     private var inputBar: some View {
         VStack(spacing: 8) {
+            // Pending image thumbnails
+            if !viewModel.pendingImageURLs.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(viewModel.pendingImageURLs.enumerated()), id: \.offset) { index, url in
+                            imageThumbnail(url: url, index: index)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+                .frame(height: 72)
+            }
+
             TextField("Type a message...", text: $viewModel.inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...8)
@@ -332,6 +354,20 @@ struct ChatView: View {
                         .foregroundStyle(.tertiary)
                 }
 
+                // Image attach button (visible when current model supports vision)
+                if viewModel.currentModelSupportsVision {
+                    Button {
+                        viewModel.pickImages()
+                    } label: {
+                        Image(systemName: "photo.badge.plus")
+                            .font(.system(size: 18))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isStreaming)
+                    .help("Attach images")
+                }
+
                 Spacer()
 
                 if viewModel.isStreaming {
@@ -350,7 +386,7 @@ struct ChatView: View {
                             .font(.system(size: 24))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!viewModel.hasText || llmService.state != .ready)
+                    .disabled(!viewModel.hasContent || llmService.state != .ready)
                 }
             }
         }
@@ -360,7 +396,88 @@ struct ChatView: View {
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(.tertiary, lineWidth: 1)
         )
+        .onDrop(of: [.image], isTargeted: nil) { providers in
+            guard viewModel.currentModelSupportsVision else { return false }
+            for provider in providers {
+                provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { data, _ in
+                    if let url = data as? URL {
+                        Task { @MainActor in
+                            viewModel.pendingImageURLs.append(url)
+                        }
+                    } else if let data = data as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        Task { @MainActor in
+                            viewModel.pendingImageURLs.append(url)
+                        }
+                    }
+                }
+            }
+            return true
+        }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Image Thumbnail
+
+    /// Thumbnail preview for a pending image attachment
+    private func imageThumbnail(url: URL, index: Int) -> some View {
+        ZStack(alignment: .topTrailing) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                default:
+                    ProgressView()
+                }
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            // Remove button
+            Button {
+                viewModel.removePendingImage(at: index)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                    .background(Circle().fill(.black.opacity(0.5)))
+            }
+            .buttonStyle(.plain)
+            .offset(x: 4, y: -4)
+        }
+    }
+
+    // MARK: - User Message Image Display
+
+    /// Display attached images in a user message bubble
+    private func messageImages(urls: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(urls, id: \.self) { urlString in
+                    if let url = URL(string: urlString) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                            case .failure:
+                                Image(systemName: "photo")
+                                    .foregroundStyle(.white.opacity(0.6))
+                            default:
+                                ProgressView()
+                            }
+                        }
+                        .frame(width: 120, height: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
     }
 }

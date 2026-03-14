@@ -7,9 +7,11 @@
 //  ChatView owns an instance and delegates all non-UI logic here.
 //
 
+import AppKit
 import Foundation
 @preconcurrency import MLXLMCommon
 import Observation
+import UniformTypeIdentifiers
 
 // MARK: - Inspector Item
 
@@ -55,6 +57,9 @@ class ChatViewModel {
     var inputText: String = ""
     var isStreaming: Bool = false
 
+    /// Pending image attachments (file URLs) for the next message
+    var pendingImageURLs: [URL] = []
+
     /// Current active tool call (nil when no tool is being invoked)
     var currentToolCall: ToolCallState?
 
@@ -86,6 +91,17 @@ class ChatViewModel {
         !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Whether there is any content to send (text or images)
+    var hasContent: Bool {
+        hasText || !pendingImageURLs.isEmpty
+    }
+
+    /// Whether the current model supports vision input
+    var currentModelSupportsVision: Bool {
+        guard let modelId = llmService?.currentModelId else { return false }
+        return ModelInfo.recommended.first(where: { $0.id == modelId })?.supportsVision ?? false
+    }
+
     var messages: [ChatMessage] {
         chatStore?.currentConversation?.messages ?? []
     }
@@ -98,18 +114,22 @@ class ChatViewModel {
 
     func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty,
+        guard hasContent,
               !isStreaming,
               llmService?.state == .ready,
               let convId = conversationId,
               let llm = llmService,
               let store = chatStore else { return }
 
+        // Capture and clear pending images
+        let imageURLs = pendingImageURLs
+        let imageURLStrings = imageURLs.map { $0.absoluteString }
+        pendingImageURLs = []
         inputText = ""
         let isFirstMessage = messages.isEmpty
 
-        // Append user message
-        let userMsg = ChatMessage(role: .user, content: text)
+        // Append user message with image URLs
+        let userMsg = ChatMessage(role: .user, content: text, imageURLs: imageURLStrings)
         store.appendMessage(userMsg, to: convId)
 
         // Append empty assistant placeholder
@@ -127,6 +147,9 @@ class ChatViewModel {
             // Build the initial message history
             var history = buildHistory(hasMCPTools: hasMCPTools)
 
+            // Convert image URLs to UserInput.Image for VLM inference
+            let vlmImages: [UserInput.Image] = imageURLs.map { .url($0) }
+
             // Accumulates the final displayed text across all rounds
             var displayText = ""
             var toolCallRound = 0
@@ -134,7 +157,9 @@ class ChatViewModel {
             // Main inference loop: stream -> check for tool_call -> re-run if needed
             while toolCallRound < maxToolCallRounds {
                 print("[ChatVM] 🔄 Round \(toolCallRound) | Starting LLM inference...")
-                let stream = llm.chat(messages: history, tools: toolSpecs)
+                // Only pass images on the first round (they belong to the original user message)
+                let roundImages = toolCallRound == 0 ? vlmImages : []
+                let stream = llm.chat(messages: history, tools: toolSpecs, images: roundImages)
 
                 var accumulated = ""
                 var detectedToolCall: ToolCall?
@@ -258,9 +283,31 @@ class ChatViewModel {
 
             // Generate title after streaming (LLM is now free)
             if isFirstMessage {
-                await generateTitle(for: convId, basedOn: text)
+                let titleBasis = text.isEmpty ? "Image conversation" : text
+                await generateTitle(for: convId, basedOn: titleBasis)
             }
         }
+    }
+
+    // MARK: - Image Attachment
+
+    /// Open a file picker to select images
+    func pickImages() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image]
+        panel.message = "Select images to attach"
+
+        guard panel.runModal() == .OK else { return }
+        pendingImageURLs.append(contentsOf: panel.urls)
+    }
+
+    /// Remove a pending image at the given index
+    func removePendingImage(at index: Int) {
+        guard pendingImageURLs.indices.contains(index) else { return }
+        pendingImageURLs.remove(at: index)
     }
 
     // MARK: - Build History
@@ -336,6 +383,7 @@ class ChatViewModel {
     func resetForNewConversation() {
         isStreaming = false
         inputText = ""
+        pendingImageURLs = []
         currentToolCall = nil
         streamingThinkingIndex = nil
         thinkBlockFinalized = false

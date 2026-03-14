@@ -18,8 +18,10 @@ struct KleeApp: App {
     @State private var mcpClientManager = MCPClientManager()
 
     init() {
-        // HuggingFace mirror acceleration (uncomment for users in China)
-        // LLMService.huggingFaceMirror = "https://hf-mirror.com"
+        // Auto-detect region: use HuggingFace mirror for users in mainland China
+        if Locale.current.region?.identifier == "CN" {
+            LLMService.huggingFaceMirror = "https://hf-mirror.com"
+        }
     }
 
     var body: some Scene {

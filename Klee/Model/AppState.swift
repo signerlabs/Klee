@@ -37,7 +37,7 @@ enum LLMState: Equatable {
 
 /// Describes an available MLX model
 struct ModelInfo: Identifiable, Equatable, Hashable {
-    /// HuggingFace model ID (e.g., "mlx-community/Qwen3-4B-4bit")
+    /// HuggingFace model ID (e.g., "mlx-community/Qwen3.5-9B-4bit")
     let id: String
     /// User-friendly display name
     let name: String
@@ -47,6 +47,17 @@ struct ModelInfo: Identifiable, Equatable, Hashable {
     let minRAM: Int
     /// Estimated download size in bytes (used for progress calculation)
     let expectedBytes: Int64
+    /// Whether this model supports vision (image/video) input
+    let supportsVision: Bool
+
+    init(id: String, name: String, size: String, minRAM: Int, expectedBytes: Int64, supportsVision: Bool = false) {
+        self.id = id
+        self.name = name
+        self.size = size
+        self.minRAM = minRAM
+        self.expectedBytes = expectedBytes
+        self.supportsVision = supportsVision
+    }
 
     /// Label describing the RAM requirement
     var ramLabel: String {
@@ -62,6 +73,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     let role: Role
     var content: String
     let timestamp: Date
+    /// File URLs of attached images (stored as strings for Codable compatibility)
+    var imageURLs: [String]
 
     enum Role: String, Equatable, Codable {
         case user
@@ -69,11 +82,22 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         case system
     }
 
-    init(role: Role, content: String) {
+    init(role: Role, content: String, imageURLs: [String] = []) {
         self.id = UUID()
         self.role = role
         self.content = content
         self.timestamp = Date()
+        self.imageURLs = imageURLs
+    }
+
+    /// Custom decoder for backward compatibility with existing JSON files that lack imageURLs
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(Role.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        imageURLs = try container.decodeIfPresent([String].self, forKey: .imageURLs) ?? []
     }
 }
 
