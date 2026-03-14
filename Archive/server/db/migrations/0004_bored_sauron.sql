@@ -1,1 +1,0 @@
-ALTER TABLE "chat_sessions" ADD COLUMN "available_knowledge_base_ids" jsonb DEFAULT '[]'::jsonb;

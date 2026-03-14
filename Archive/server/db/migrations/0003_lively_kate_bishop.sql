@@ -1,1 +1,0 @@
-ALTER TABLE "knowledge_base_files" ADD COLUMN "status" varchar(20) DEFAULT 'processing' NOT NULL;

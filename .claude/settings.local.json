@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(xcodebuild build:*)",
+      "Bash(sudo chown:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(curl:*)",
+      "Bash(find:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh repo:*)",
+      "Bash(gh release:*)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

@@ -9,6 +9,7 @@ Klee uses [MLX](https://github.com/ml-explore/mlx-swift) to run large language m
 - **100% local inference** -- your data stays on your Mac
 - **No account or API key required** -- download and start chatting
 - **One-click model download** -- pick a model, Klee handles the rest
+- **Vision support** -- attach images to your messages with supported VLM models
 - **Streaming responses** -- tokens appear as they're generated
 - **Connectors (MCP)** -- extend the AI with external tools (web browsing, file access, databases, and more)
 - **Inspector panel** -- see the AI's thinking process and tool usage in real-time
@@ -20,16 +21,16 @@ Klee uses [MLX](https://github.com/ml-explore/mlx-swift) to run large language m
 |---|---|
 | macOS | 15.0 (Sequoia) or later |
 | Chip | Apple Silicon (M1 or later) |
-| RAM | 8 GB (see model table below) |
+| RAM | 16 GB (see model table below) |
 
 More RAM unlocks larger, more capable models:
 
 | RAM | Recommended Models |
 |---|---|
-| 8 GB | Gemma 3 4B, Qwen3 4B, Phi 4 Mini |
-| 16 GB | Qwen3 8B, Gemma 3 12B, DeepSeek R1 8B |
-| 32 GB | Qwen3 14B, Qwen3 30B (MoE) |
-| 64 GB+ | Gemma 3 27B, DeepSeek R1 32B |
+| 16 GB | Qwen 3.5 9B, Gemma 3 12B, DeepSeek R1 8B |
+| 32 GB | Qwen 3.5 27B, Qwen 3.5 35B (MoE) |
+| 64 GB | Gemma 3 27B, DeepSeek R1 32B |
+| 96 GB+ | Qwen 3.5 122B (MoE) |
 
 ## Install
 
@@ -51,18 +52,16 @@ Models are cached in `~/Library/Caches/models/` and persist across app restarts.
 
 All models are 4-bit quantized variants from the [mlx-community](https://huggingface.co/mlx-community) on HuggingFace.
 
-| Model | Size | Min RAM | HuggingFace ID |
-|---|---|---|---|
-| Gemma 3 4B | ~3 GB | 8 GB | `mlx-community/gemma-3-4b-it-qat-4bit` |
-| Qwen3 4B | ~2.5 GB | 8 GB | `mlx-community/Qwen3-4B-4bit` |
-| Phi 4 Mini | ~2.2 GB | 8 GB | `mlx-community/Phi-4-mini-instruct-4bit` |
-| Qwen3 8B | ~5 GB | 16 GB | `mlx-community/Qwen3-8B-4bit` |
-| Gemma 3 12B | ~8 GB | 16 GB | `mlx-community/gemma-3-12b-it-qat-4bit` |
-| DeepSeek R1 8B | ~4.6 GB | 16 GB | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` |
-| Qwen3 14B | ~8 GB | 32 GB | `mlx-community/Qwen3-14B-4bit` |
-| Qwen3 30B (MoE) | ~17 GB | 32 GB | `mlx-community/Qwen3-30B-A3B-4bit` |
-| Gemma 3 27B | ~17 GB | 64 GB | `mlx-community/gemma-3-27b-it-qat-4bit` |
-| DeepSeek R1 32B | ~18 GB | 64 GB | `mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit` |
+| Model | Size | Min RAM | Vision | HuggingFace ID |
+|---|---|---|---|---|
+| Qwen 3.5 9B | ~6 GB | 16 GB | Yes | `mlx-community/Qwen3.5-9B-4bit` |
+| Gemma 3 12B | ~8 GB | 16 GB | | `mlx-community/gemma-3-12b-it-qat-4bit` |
+| DeepSeek R1 8B | ~4.6 GB | 16 GB | | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` |
+| Qwen 3.5 27B | ~16 GB | 32 GB | Yes | `mlx-community/Qwen3.5-27B-4bit` |
+| Qwen 3.5 35B (MoE) | ~20 GB | 32 GB | Yes | `mlx-community/Qwen3.5-35B-A3B-4bit` |
+| Gemma 3 27B | ~17 GB | 64 GB | | `mlx-community/gemma-3-27b-it-qat-4bit` |
+| DeepSeek R1 32B | ~18 GB | 64 GB | | `mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit` |
+| Qwen 3.5 122B (MoE) | ~70 GB | 96 GB | Yes | `mlx-community/Qwen3.5-122B-A10B-4bit` |
 
 ## Build from Source
 
@@ -80,7 +79,12 @@ Select the **Klee** scheme, then build and run (Cmd+R). SPM dependencies (mlx-sw
 
 Connectors let Klee talk to external tools and services via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Each connector is a small plugin that gives the AI new abilities beyond just chatting.
 
-To add a connector:
+Klee comes with two built-in connectors:
+
+- **Web Browser** -- browse and interact with web pages (powered by Playwright)
+- **Filesystem** -- read, write, and search files on your Mac
+
+To add a custom connector:
 
 1. Open **Settings > Connectors** from the sidebar
 2. Click **Add Server**
