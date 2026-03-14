@@ -9,7 +9,7 @@
 
 import Foundation
 import Observation
-import MLXLLM
+import MLXVLM
 @preconcurrency import MLXLMCommon
 
 /// A single piece of generation output — either a text chunk or a tool call.
@@ -96,17 +96,18 @@ class LLMService {
         loadingStatus = "Loading model..."
 
         do {
+            // Patch missing chat_template before loading (mlx-vlm conversions strip it)
+            await Self.ensureChatTemplate(for: id)
+
             // If the model is already cached locally, load directly from disk to avoid
             // unnecessary network requests (Hub normally fetches remote hashes even for cached models)
-            let localURL = localCacheURL(for: id)
+            let localURL = Self.localCacheURL(for: id)
             let isCachedLocally = FileManager.default.fileExists(atPath: localURL.path)
             let configuration = isCachedLocally
                 ? ModelConfiguration(directory: localURL)
                 : ModelConfiguration(id: id)
 
-            let container = try await LLMModelFactory.shared.loadContainer(
-                configuration: configuration
-            ) { [weak self] progress in
+            let progressHandler: @Sendable (Progress) -> Void = { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.loadProgress = progress.fractionCompleted
@@ -117,6 +118,11 @@ class LLMService {
                     }
                 }
             }
+
+            let container = try await VLMModelFactory.shared.loadContainer(
+                configuration: configuration,
+                progressHandler: progressHandler
+            )
 
             modelContainer = container
             currentModelId = id
@@ -136,9 +142,102 @@ class LLMService {
     }
 
     /// Local cache directory for a model: ~/Library/Caches/models/{org}/{model-name}/
-    private func localCacheURL(for id: String) -> URL {
+    /// Matches the Hub library's default download path on macOS.
+    static func localCacheURL(for id: String) -> URL {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return caches.appendingPathComponent("models/\(id)")
+    }
+
+    // MARK: - Chat Template Auto-Fix
+
+    /// Ensure the cached model has a chat_template in its tokenizer_config.json.
+    /// Many mlx-community models converted with mlx-vlm strip the chat_template,
+    /// which breaks tool calling. This method detects the issue and fetches the
+    /// template from the original upstream model.
+    /// - Returns: `true` if the template was patched, `false` if already present or not applicable.
+    @discardableResult
+    static func ensureChatTemplate(for id: String) async -> Bool {
+        let localURL = localCacheURL(for: id)
+        let tokenizerConfigURL = localURL.appendingPathComponent("tokenizer_config.json")
+
+        guard FileManager.default.fileExists(atPath: tokenizerConfigURL.path),
+              let data = try? Data(contentsOf: tokenizerConfigURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+
+        // Already has chat_template — nothing to do
+        if json["chat_template"] != nil { return false }
+
+        // Infer the original upstream model ID from the mlx-community model ID
+        // e.g. "mlx-community/Qwen3.5-35B-A3B-4bit" -> "Qwen/Qwen3.5-35B-A3B"
+        guard let upstreamId = inferUpstreamModelId(from: id) else {
+            print("[LLMService] Cannot infer upstream model for '\(id)', skipping chat_template fix")
+            return false
+        }
+
+        print("[LLMService] Missing chat_template, fetching from '\(upstreamId)'...")
+
+        let endpoint = huggingFaceMirror ?? "https://huggingface.co"
+        let urlString = "\(endpoint)/\(upstreamId)/resolve/main/tokenizer_config.json"
+        guard let url = URL(string: urlString) else { return false }
+
+        do {
+            let (remoteData, _) = try await URLSession.shared.data(from: url)
+            guard let remoteJson = try JSONSerialization.jsonObject(with: remoteData) as? [String: Any],
+                  let chatTemplate = remoteJson["chat_template"]
+            else {
+                print("[LLMService] Upstream tokenizer_config.json has no chat_template either")
+                return false
+            }
+
+            // Merge chat_template into the local config
+            var patched = json
+            patched["chat_template"] = chatTemplate
+            let patchedData = try JSONSerialization.data(withJSONObject: patched, options: [.prettyPrinted, .sortedKeys])
+            try patchedData.write(to: tokenizerConfigURL)
+            print("[LLMService] chat_template patched successfully from '\(upstreamId)'")
+            return true
+        } catch {
+            print("[LLMService] Failed to fetch chat_template: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Infer the original HuggingFace model ID from an mlx-community model ID.
+    /// Maps known org prefixes and strips quantization suffixes.
+    private static func inferUpstreamModelId(from id: String) -> String? {
+        // Only handle mlx-community models
+        guard id.hasPrefix("mlx-community/") else { return nil }
+        var name = String(id.dropFirst("mlx-community/".count))
+
+        // Strip common quantization suffixes
+        let suffixes = ["-MLX-4bit", "-MLX-8bit", "-4bit", "-8bit", "-nvfp4", "-fp16"]
+        for suffix in suffixes {
+            if name.hasSuffix(suffix) {
+                name = String(name.dropLast(suffix.count))
+                break
+            }
+        }
+
+        // Map known model families to their upstream orgs
+        let orgMappings: [(prefix: String, org: String)] = [
+            ("Qwen", "Qwen"),
+            ("DeepSeek", "deepseek-ai"),
+            ("gemma", "google"),
+            ("Gemma", "google"),
+            ("Llama", "meta-llama"),
+            ("Mistral", "mistralai"),
+            ("GLM", "zai-org"),
+            ("Kimi", "moonshotai"),
+        ]
+
+        for mapping in orgMappings {
+            if name.hasPrefix(mapping.prefix) {
+                return "\(mapping.org)/\(name)"
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Streaming Chat

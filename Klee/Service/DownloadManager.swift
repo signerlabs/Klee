@@ -9,7 +9,7 @@
 
 import Foundation
 import Observation
-import MLXLLM
+import MLXVLM
 @preconcurrency import MLXLMCommon
 
 // MARK: - Download Status
@@ -98,14 +98,7 @@ class DownloadManager {
 
                 // Track download progress via loadContainer's Progress callback
                 // Hub.snapshot creates child Progress per file, callback fires on each chunk write
-                let container = try await LLMModelFactory.shared.loadContainer(
-                    configuration: configuration
-                ) { [weak self] progress in
-                    // Progress object:
-                    //   totalUnitCount = total file count
-                    //   completedUnitCount = completed files (including partial progress)
-                    //   fractionCompleted = overall completion ratio
-                    //   userInfo[.throughputKey] = current speed (bytes/sec)
+                let progressHandler: @Sendable (Progress) -> Void = { [weak self] progress in
                     Task { @MainActor [weak self] in
                         guard let self, self.status == .downloading else { return }
                         self.progress.fractionCompleted = progress.fractionCompleted
@@ -115,6 +108,23 @@ class DownloadManager {
                             self.progress.speed = speed
                         }
                     }
+                }
+
+                var container = try await VLMModelFactory.shared.loadContainer(
+                    configuration: configuration,
+                    progressHandler: progressHandler
+                )
+
+                // Patch missing chat_template after download (mlx-vlm conversions strip it).
+                // If patched, reload the container so the tokenizer picks up the template.
+                let patched = await LLMService.ensureChatTemplate(for: id)
+                if patched {
+                    let localURL = LLMService.localCacheURL(for: id)
+                    let reloadConfig = ModelConfiguration(directory: localURL)
+                    container = try await VLMModelFactory.shared.loadContainer(
+                        configuration: reloadConfig,
+                        progressHandler: { _ in }
+                    )
                 }
 
                 // Check if cancelled
