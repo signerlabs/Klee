@@ -93,6 +93,10 @@ To add a custom connector:
 
 Klee bundles Node.js so you don't need to install anything separately.
 
+## Acknowledgements
+
+Klee's rewrite was built with components and architecture from [ShipSwift](https://shipswift.app), which made the native SwiftUI rebuild significantly faster.
+
 ## License
 
 MIT
