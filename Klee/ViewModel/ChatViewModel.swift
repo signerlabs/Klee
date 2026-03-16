@@ -174,10 +174,13 @@ class ChatViewModel {
                         tokenCount += 1
                         // Update Inspector with real-time thinking
                         updateInspectorStreaming(accumulated: accumulated)
-                        // Show only clean text in ChatView (strip <think> blocks in real-time)
-                        let cleanedSoFar = removeThinkBlock(from: displayText + accumulated)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        store.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
+                        // Skip UI updates during thinking phase — content hasn't changed and
+                        // updating every thinking token causes unnecessary SwiftUI re-renders.
+                        if streamingThinkingIndex == nil {
+                            let cleanedSoFar = removeThinkBlock(from: displayText + accumulated)
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            store.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
+                        }
                     case .toolCall(let tc):
                         detectedToolCall = tc
                         print("[ChatVM] 🔧 Native tool call detected: \(tc.function.name)")
@@ -227,13 +230,9 @@ class ChatViewModel {
                             )
                         }
                         print("[ChatVM] ✅ Tool success, result length=\(result.count)")
-                        // Use .system role for tool results (the model's chat template handles formatting)
-                        history.append(ChatMessage(role: .system, content: """
-                            Tool '\(toolName)' returned:
-                            \(result)
-
-                            Continue your response to the user based on this tool result.
-                            """))
+                        // Qwen3.5 template expects tool results wrapped in <tool_response> as a user message.
+                        // Using system role mid-conversation triggers JinjaTemplateException.
+                        history.append(ChatMessage(role: .user, content: "<tool_response>\n\(result)\n</tool_response>"))
                     } else {
                         let errMsg = toolResult.error ?? "Unknown error"
                         currentToolCall = .failed(toolName: toolName, error: errMsg)
@@ -244,10 +243,7 @@ class ChatViewModel {
                             )
                         }
                         print("[ChatVM] ❌ Tool failed: \(errMsg)")
-                        history.append(ChatMessage(role: .system, content: """
-                            Tool '\(toolName)' failed: \(errMsg)
-                            Inform the user and continue without the tool.
-                            """))
+                        history.append(ChatMessage(role: .user, content: "<tool_response>\nError: \(errMsg)\n</tool_response>"))
                     }
 
                     print("[ChatVM] 🔄 Continuing to next round...")
@@ -278,14 +274,15 @@ class ChatViewModel {
             // Persist inspector items alongside the conversation
             store.updateInspectorItems(inspectorItems, for: convId)
             store.saveConversation(id: convId)
-            isStreaming = false
             currentToolCall = nil
 
-            // Generate title after streaming (LLM is now free)
+            // Generate title before releasing isStreaming so the LLM is not
+            // claimed by a new user message while title generation is running.
             if isFirstMessage {
                 let titleBasis = text.isEmpty ? "Image conversation" : text
                 await generateTitle(for: convId, basedOn: titleBasis)
             }
+            isStreaming = false
         }
     }
 
@@ -354,12 +351,19 @@ class ChatViewModel {
     /// Remove all <think>...</think> blocks from text for clean display
     private func removeThinkBlock(from text: String) -> String {
         var result = text
+        // Remove complete <think>...</think> blocks
         while let start = result.range(of: "<think>") {
             if let end = result.range(of: "</think>") {
                 result.removeSubrange(start.lowerBound..<end.upperBound)
             } else {
                 result.removeSubrange(start.lowerBound..<result.endIndex)
             }
+        }
+        // Handle orphaned </think>: Qwen3.5 puts <think> in generation prompt (not in stream),
+        // so the stream starts with thinking content and ends with </think>.
+        // Everything before </think> is thinking — strip it.
+        if let end = result.range(of: "</think>") {
+            result.removeSubrange(result.startIndex..<end.upperBound)
         }
         return result
     }
@@ -397,35 +401,52 @@ class ChatViewModel {
     /// Update Inspector in real-time during streaming to show thinking content as it arrives.
     /// Called after each token; detects open/closed <think> blocks in the accumulated text.
     private func updateInspectorStreaming(accumulated: String) {
-        // Once this round's think block is finalized, skip re-processing
         if thinkBlockFinalized { return }
-        guard let thinkStart = accumulated.range(of: "<think>") else { return }
 
-        let afterThink = accumulated[thinkStart.upperBound...]
-
-        if let thinkEnd = afterThink.range(of: "</think>") {
-            // Think block is complete — finalize and stop tracking
-            let content = String(afterThink[..<thinkEnd.lowerBound])
+        if accumulated.contains("<think>") {
+            // Standard mode: <think> is in the stream (old models)
+            guard let thinkStart = accumulated.range(of: "<think>") else { return }
+            let afterThink = accumulated[thinkStart.upperBound...]
+            if let thinkEnd = afterThink.range(of: "</think>") {
+                let content = String(afterThink[..<thinkEnd.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let index = streamingThinkingIndex, index < inspectorItems.count {
+                    inspectorItems[index].content = .thinking(content.isEmpty ? "…" : content)
+                }
+                streamingThinkingIndex = nil
+                thinkBlockFinalized = true
+            } else {
+                let content = String(afterThink).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let index = streamingThinkingIndex, index < inspectorItems.count {
+                    inspectorItems[index].content = .thinking(content.isEmpty ? "…" : content)
+                } else {
+                    streamingThinkingIndex = inspectorItems.count
+                    inspectorItems.append(InspectorItem(
+                        timestamp: Date(),
+                        content: .thinking(content.isEmpty ? "…" : content)
+                    ))
+                }
+            }
+        } else if let closeRange = accumulated.range(of: "</think>") {
+            // Qwen3.5 mode: <think> was in generation prompt, stream starts with thinking content
+            let content = String(accumulated[..<closeRange.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if let index = streamingThinkingIndex, index < inspectorItems.count {
-                if content.isEmpty {
-                    // Empty think block — remove the placeholder item
-                    inspectorItems.remove(at: index)
-                } else {
-                    inspectorItems[index].content = .thinking(content)
-                }
+                inspectorItems[index].content = .thinking(content.isEmpty ? "…" : content)
+            } else {
+                inspectorItems.append(InspectorItem(
+                    timestamp: Date(),
+                    content: .thinking(content.isEmpty ? "…" : content)
+                ))
             }
             streamingThinkingIndex = nil
             thinkBlockFinalized = true
         } else {
-            // Think block still open — streaming in progress
-            let content = String(afterThink)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Qwen3.5 mode: still streaming thinking content (no </think> yet)
+            let content = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
             if let index = streamingThinkingIndex, index < inspectorItems.count {
-                // Update existing streaming item
                 inspectorItems[index].content = .thinking(content.isEmpty ? "…" : content)
-            } else {
-                // Create new streaming thinking item
+            } else if !accumulated.isEmpty {
                 streamingThinkingIndex = inspectorItems.count
                 inspectorItems.append(InspectorItem(
                     timestamp: Date(),

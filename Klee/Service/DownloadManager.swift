@@ -371,6 +371,9 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
                 throw AppError.downloadFailed("Downloaded safetensors file is 0 bytes: \(file.path)")
             }
         }
+
+        // Step 4: Patch tokenizer_config.json if chat_template is missing
+        await patchTokenizerConfigIfNeeded(modelId: modelId, localURL: localDir)
     }
 
     /// Fetch file list from HuggingFace API
@@ -705,5 +708,284 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
         activeDownloadTask = nil
         downloadTask?.cancel()
         downloadTask = nil
+    }
+
+    // MARK: - Tokenizer Config Patching
+
+    /// Standard Qwen chat template used as fallback when the model's
+    /// tokenizer_config.json is missing a chat_template field.
+    /// Supports Qwen3.5 thinking mode, tool calling, and vision content.
+    private static let qwenChatTemplate: String = #"""
+{%- set image_count = namespace(value=0) %}
+{%- set video_count = namespace(value=0) %}
+{%- macro render_content(content, do_vision_count, is_system_content=false) %}
+    {%- if content is string %}
+        {{- content }}
+    {%- elif content is iterable and content is not mapping %}
+        {%- for item in content %}
+            {%- if 'image' in item or 'image_url' in item or item.type == 'image' %}
+                {%- if is_system_content %}
+                    {{- raise_exception('System message cannot contain images.') }}
+                {%- endif %}
+                {%- if do_vision_count %}
+                    {%- set image_count.value = image_count.value + 1 %}
+                {%- endif %}
+                {%- if add_vision_id %}
+                    {{- 'Picture ' ~ image_count.value ~ ': ' }}
+                {%- endif %}
+                {{- '<|vision_start|><|image_pad|><|vision_end|>' }}
+            {%- elif 'video' in item or item.type == 'video' %}
+                {%- if is_system_content %}
+                    {{- raise_exception('System message cannot contain videos.') }}
+                {%- endif %}
+                {%- if do_vision_count %}
+                    {%- set video_count.value = video_count.value + 1 %}
+                {%- endif %}
+                {%- if add_vision_id %}
+                    {{- 'Video ' ~ video_count.value ~ ': ' }}
+                {%- endif %}
+                {{- '<|vision_start|><|video_pad|><|vision_end|>' }}
+            {%- elif 'text' in item %}
+                {{- item.text }}
+            {%- else %}
+                {{- raise_exception('Unexpected item type in content.') }}
+            {%- endif %}
+        {%- endfor %}
+    {%- elif content is none or content is undefined %}
+        {{- '' }}
+    {%- else %}
+        {{- raise_exception('Unexpected content type.') }}
+    {%- endif %}
+{%- endmacro %}
+{%- if not messages %}
+    {{- raise_exception('No messages provided.') }}
+{%- endif %}
+{%- if tools and tools is iterable and tools is not mapping %}
+    {{- '<|im_start|>system\n' }}
+    {{- "# Tools\n\nYou have access to the following functions:\n\n<tools>" }}
+    {%- for tool in tools %}
+        {{- "\n" }}
+        {{- tool | tojson }}
+    {%- endfor %}
+    {{- "\n</tools>" }}
+    {{- '\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>' }}
+    {%- if messages[0].role == 'system' %}
+        {%- set content = render_content(messages[0].content, false, true)|trim %}
+        {%- if content %}
+            {{- '\n\n' + content }}
+        {%- endif %}
+    {%- endif %}
+    {{- '<|im_end|>\n' }}
+{%- else %}
+    {%- if messages[0].role == 'system' %}
+        {%- set content = render_content(messages[0].content, false, true)|trim %}
+        {{- '<|im_start|>system\n' + content + '<|im_end|>\n' }}
+    {%- endif %}
+{%- endif %}
+{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}
+{%- for message in messages[::-1] %}
+    {%- set index = (messages|length - 1) - loop.index0 %}
+    {%- if ns.multi_step_tool and message.role == "user" %}
+        {%- set content = render_content(message.content, false)|trim %}
+        {%- if not(content.startswith('<tool_response>') and content.endswith('</tool_response>')) %}
+            {%- set ns.multi_step_tool = false %}
+            {%- set ns.last_query_index = index %}
+        {%- endif %}
+    {%- endif %}
+{%- endfor %}
+{%- if ns.multi_step_tool %}
+    {{- raise_exception('No user query found in messages.') }}
+{%- endif %}
+{%- for message in messages %}
+    {%- set content = render_content(message.content, true)|trim %}
+    {%- if message.role == "system" %}
+        {%- if not loop.first %}
+            {{- raise_exception('System message must be at the beginning.') }}
+        {%- endif %}
+    {%- elif message.role == "user" %}
+        {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n' }}
+    {%- elif message.role == "assistant" %}
+        {%- set reasoning_content = '' %}
+        {%- if message.reasoning_content is string %}
+            {%- set reasoning_content = message.reasoning_content %}
+        {%- else %}
+            {%- if '</think>' in content %}
+                {%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') %}
+                {%- set content = content.split('</think>')[-1].lstrip('\n') %}
+            {%- endif %}
+        {%- endif %}
+        {%- set reasoning_content = reasoning_content|trim %}
+        {%- if loop.index0 > ns.last_query_index %}
+            {{- '<|im_start|>' + message.role + '\n<think>\n' + reasoning_content + '\n</think>\n\n' + content }}
+        {%- else %}
+            {{- '<|im_start|>' + message.role + '\n' + content }}
+        {%- endif %}
+        {%- if message.tool_calls and message.tool_calls is iterable and message.tool_calls is not mapping %}
+            {%- for tool_call in message.tool_calls %}
+                {%- if tool_call.function is defined %}
+                    {%- set tool_call = tool_call.function %}
+                {%- endif %}
+                {%- if loop.first %}
+                    {%- if content|trim %}
+                        {{- '\n\n<tool_call>\n<function=' + tool_call.name + '>\n' }}
+                    {%- else %}
+                        {{- '<tool_call>\n<function=' + tool_call.name + '>\n' }}
+                    {%- endif %}
+                {%- else %}
+                    {{- '\n<tool_call>\n<function=' + tool_call.name + '>\n' }}
+                {%- endif %}
+                {%- if tool_call.arguments is defined %}
+                    {%- for args_name, args_value in tool_call.arguments|items %}
+                        {{- '<parameter=' + args_name + '>\n' }}
+                        {%- set args_value = args_value | tojson | safe if args_value is mapping or (args_value is sequence and args_value is not string) else args_value | string %}
+                        {{- args_value }}
+                        {{- '\n</parameter>\n' }}
+                    {%- endfor %}
+                {%- endif %}
+                {{- '</function>\n</tool_call>' }}
+            {%- endfor %}
+        {%- endif %}
+        {{- '<|im_end|>\n' }}
+    {%- elif message.role == "tool" %}
+        {%- if loop.previtem and loop.previtem.role != "tool" %}
+            {{- '<|im_start|>user' }}
+        {%- endif %}
+        {{- '\n<tool_response>\n' }}
+        {{- content }}
+        {{- '\n</tool_response>' }}
+        {%- if not loop.last and loop.nextitem.role != "tool" %}
+            {{- '<|im_end|>\n' }}
+        {%- elif loop.last %}
+            {{- '<|im_end|>\n' }}
+        {%- endif %}
+    {%- else %}
+        {{- raise_exception('Unexpected message role.') }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+    {%- if enable_thinking is defined and enable_thinking is false %}
+        {{- '<think>\n\n</think>\n\n' }}
+    {%- else %}
+        {{- '<think>\n' }}
+    {%- endif %}
+{%- endif %}
+"""#
+
+    /// Fallback chat_template mapping for known model families.
+    /// Key is a substring matched against the model ID (case-insensitive).
+    private static let fallbackTemplates: [(keyword: String, template: String)] = [
+        ("Qwen3.5", qwenChatTemplate),
+        ("Qwen3VL", qwenChatTemplate),
+    ]
+
+    /// Check and patch tokenizer_config.json if the chat_template field is missing.
+    ///
+    /// Some mlx-community models omit chat_template, causing inference to fail with
+    /// "This tokenizer does not have a chat template". This method:
+    /// 1. Reads the local tokenizer_config.json
+    /// 2. If chat_template is present, does nothing
+    /// 3. Fetches the original repo's tokenizer_config.json from HuggingFace
+    /// 4. Falls back to a built-in template table if remote fetch fails
+    /// 5. Writes the patched JSON back to disk
+    ///
+    /// Failures are silently logged — this must never block the main download flow.
+    private func patchTokenizerConfigIfNeeded(modelId: String, localURL: URL) async {
+        let configURL = localURL.appendingPathComponent("tokenizer_config.json")
+        let fm = FileManager.default
+
+        // Guard: file must exist
+        guard fm.fileExists(atPath: configURL.path) else {
+            print("[DownloadManager] tokenizer_config.json not found, skipping patch")
+            return
+        }
+
+        // Read and parse existing config
+        guard let data = fm.contents(atPath: configURL.path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("[DownloadManager] Failed to parse tokenizer_config.json, skipping patch")
+            return
+        }
+
+        // Already has chat_template — nothing to do
+        if json["chat_template"] != nil {
+            return
+        }
+
+        print("[DownloadManager] chat_template missing in tokenizer_config.json, attempting to patch...")
+
+        // Attempt 1: Fetch from the original HuggingFace repo
+        if let remoteTemplate = await fetchRemoteChatTemplate(modelId: modelId) {
+            var patched = json
+            patched["chat_template"] = remoteTemplate
+            if writePatchedConfig(patched, to: configURL) {
+                print("[DownloadManager] Patched chat_template from remote repo")
+                return
+            }
+        }
+
+        // Attempt 2: Use built-in fallback template
+        let lowerId = modelId.lowercased()
+        for entry in Self.fallbackTemplates {
+            if lowerId.contains(entry.keyword.lowercased()) {
+                var patched = json
+                patched["chat_template"] = entry.template
+                if writePatchedConfig(patched, to: configURL) {
+                    print("[DownloadManager] Patched chat_template from built-in fallback (\(entry.keyword))")
+                    return
+                }
+            }
+        }
+
+        print("[DownloadManager] No chat_template source found for \(modelId), skipping patch")
+    }
+
+    /// Fetch chat_template from the original (non-quantized) HuggingFace repo.
+    /// Returns the template string if found, nil otherwise.
+    private func fetchRemoteChatTemplate(modelId: String) async -> Any? {
+        let endpoint = Self.resolvedEndpoint()
+        let urlString = "\(endpoint)/\(modelId)/raw/main/tokenizer_config.json"
+
+        guard let url = URL(string: urlString) else { return nil }
+
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                print("[DownloadManager] Remote tokenizer_config.json fetch failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))")
+                return nil
+            }
+
+            guard let remoteJSON = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let template = remoteJSON["chat_template"] else {
+                print("[DownloadManager] Remote tokenizer_config.json has no chat_template either")
+                return nil
+            }
+
+            return template
+        } catch {
+            print("[DownloadManager] Failed to fetch remote tokenizer_config.json: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Write patched config dictionary back to disk as pretty-printed JSON.
+    /// Returns true on success.
+    @discardableResult
+    private func writePatchedConfig(_ config: [String: Any], to url: URL) -> Bool {
+        do {
+            let patchedData = try JSONSerialization.data(
+                withJSONObject: config,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+            try patchedData.write(to: url, options: .atomic)
+            return true
+        } catch {
+            print("[DownloadManager] Failed to write patched tokenizer_config.json: \(error.localizedDescription)")
+            return false
+        }
     }
 }
