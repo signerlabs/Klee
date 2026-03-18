@@ -17,7 +17,10 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(gh repo:*)",
       "Bash(gh release:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(gh api:*)",
+      "Bash(which xhs:*)",
+      "Bash(xhs:*)"
     ]
   }
 }
