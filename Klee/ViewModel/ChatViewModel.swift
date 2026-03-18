@@ -13,32 +13,6 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 
-// MARK: - Inspector Item
-
-/// Represents a single entry in the Inspector panel (thinking block or tool call)
-struct InspectorItem: Identifiable, Codable, Equatable {
-    let id: UUID
-    let timestamp: Date
-    var content: Content
-
-    enum Content: Codable, Equatable {
-        case thinking(String)
-        case toolCall(name: String, arguments: String, status: ToolCallStatus)
-    }
-
-    enum ToolCallStatus: Codable, Equatable {
-        case calling
-        case completed(result: String)
-        case failed(error: String)
-    }
-
-    init(timestamp: Date, content: Content) {
-        self.id = UUID()
-        self.timestamp = timestamp
-        self.content = content
-    }
-}
-
 @Observable
 @MainActor
 class ChatViewModel {
@@ -74,16 +48,24 @@ class ChatViewModel {
     /// Whether the current round's think block has been finalized (prevents duplicate processing)
     private var thinkBlockFinalized = false
 
-    // MARK: - Dependencies (injected after init)
+    // MARK: - Dependencies (injected via init)
 
-    var llmService: LLMService?
-    var chatStore: ChatStore?
-    var mcpClientManager: MCPClientManager?
+    private let llmService: LLMService
+    private let chatStore: ChatStore
+    private let mcpClientManager: MCPClientManager
 
     // MARK: - Constants
 
     /// Maximum number of tool-call round-trips before forcing completion
     private let maxToolCallRounds = 10
+
+    // MARK: - Init
+
+    init(llmService: LLMService, chatStore: ChatStore, mcpClientManager: MCPClientManager) {
+        self.llmService = llmService
+        self.chatStore = chatStore
+        self.mcpClientManager = mcpClientManager
+    }
 
     // MARK: - Computed Helpers
 
@@ -98,16 +80,16 @@ class ChatViewModel {
 
     /// Whether the current model supports vision input
     var currentModelSupportsVision: Bool {
-        guard let modelId = llmService?.currentModelId else { return false }
+        guard let modelId = llmService.currentModelId else { return false }
         return ModelInfo.recommended.first(where: { $0.id == modelId })?.supportsVision ?? false
     }
 
     var messages: [ChatMessage] {
-        chatStore?.currentConversation?.messages ?? []
+        chatStore.currentConversation?.messages ?? []
     }
 
     var conversationId: UUID? {
-        chatStore?.selectedConversationId
+        chatStore.selectedConversationId
     }
 
     // MARK: - Send Message
@@ -116,10 +98,8 @@ class ChatViewModel {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard hasContent,
               !isStreaming,
-              llmService?.state == .ready,
-              let convId = conversationId,
-              let llm = llmService,
-              let store = chatStore else { return }
+              llmService.state == .ready,
+              let convId = conversationId else { return }
 
         // Capture and clear pending images
         let imageURLs = pendingImageURLs
@@ -130,19 +110,19 @@ class ChatViewModel {
 
         // Append user message with image URLs
         let userMsg = ChatMessage(role: .user, content: text, imageURLs: imageURLStrings)
-        store.appendMessage(userMsg, to: convId)
+        chatStore.appendMessage(userMsg, to: convId)
 
         // Append empty assistant placeholder
         let assistantMsg = ChatMessage(role: .assistant, content: "")
-        store.appendMessage(assistantMsg, to: convId)
+        chatStore.appendMessage(assistantMsg, to: convId)
         let assistantID = assistantMsg.id
 
         isStreaming = true
 
         Task {
-            let hasMCPTools = mcpClientManager?.hasTools == true
-            let toolSpecs = hasMCPTools ? mcpClientManager?.toolSpecs : nil
-            print("[ChatVM] 🚀 Start | hasMCPTools=\(hasMCPTools) | toolCount=\(mcpClientManager?.allTools.count ?? 0) | nativeTools=\(toolSpecs?.count ?? 0)")
+            let hasMCPTools = mcpClientManager.hasTools
+            let toolSpecs = hasMCPTools ? mcpClientManager.toolSpecs : nil
+            print("[ChatVM] 🚀 Start | hasMCPTools=\(hasMCPTools) | toolCount=\(mcpClientManager.allTools.count) | nativeTools=\(toolSpecs?.count ?? 0)")
 
             // Build the initial message history
             var history = buildHistory(hasMCPTools: hasMCPTools)
@@ -159,7 +139,7 @@ class ChatViewModel {
                 print("[ChatVM] 🔄 Round \(toolCallRound) | Starting LLM inference...")
                 // Only pass images on the first round (they belong to the original user message)
                 let roundImages = toolCallRound == 0 ? vlmImages : []
-                let stream = llm.chat(messages: history, tools: toolSpecs, images: roundImages)
+                let stream = llmService.chat(messages: history, tools: toolSpecs, images: roundImages)
 
                 var accumulated = ""
                 var detectedToolCall: ToolCall?
@@ -179,7 +159,7 @@ class ChatViewModel {
                         if streamingThinkingIndex == nil {
                             let cleanedSoFar = removeThinkBlock(from: displayText + accumulated)
                                 .trimmingCharacters(in: .whitespacesAndNewlines)
-                            store.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
+                            chatStore.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
                         }
                     case .toolCall(let tc):
                         detectedToolCall = tc
@@ -214,7 +194,7 @@ class ChatViewModel {
                     let cleaned = removeThinkBlock(from: accumulated)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     displayText += cleaned.isEmpty ? "" : cleaned + "\n\n"
-                    store.updateMessage(id: assistantID, in: convId, content: displayText)
+                    chatStore.updateMessage(id: assistantID, in: convId, content: displayText)
 
                     // Build continuation messages for next round (strip think blocks to prevent repetition)
                     let cleanedForHistory = removeThinkBlock(from: accumulated)
@@ -259,21 +239,21 @@ class ChatViewModel {
             // Finalize: strip <think> blocks for clean display
             let finalContent = removeThinkBlock(from: displayText)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            store.updateMessage(id: assistantID, in: convId, content: finalContent)
+            chatStore.updateMessage(id: assistantID, in: convId, content: finalContent)
             print("[ChatVM] 🏁 Done | final length=\(finalContent.count)")
 
             // Remove placeholder if empty (generation failed)
             if finalContent.isEmpty {
-                store.removeMessage(id: assistantID, from: convId)
-                if let error = llm.error {
+                chatStore.removeMessage(id: assistantID, from: convId)
+                if let error = llmService.error {
                     let errMsg = ChatMessage(role: .system, content: "Error: \(error)")
-                    store.appendMessage(errMsg, to: convId)
+                    chatStore.appendMessage(errMsg, to: convId)
                 }
             }
 
             // Persist inspector items alongside the conversation
-            store.updateInspectorItems(inspectorItems, for: convId)
-            store.saveConversation(id: convId)
+            chatStore.updateInspectorItems(inspectorItems, for: convId)
+            chatStore.saveConversation(id: convId)
             currentToolCall = nil
 
             // Generate title before releasing isStreaming so the LLM is not
@@ -318,10 +298,11 @@ class ChatViewModel {
 
         // Prepend behavioral system prompt if tools are available
         // (tool definitions are passed via native UserInput.tools, not in the prompt)
-        if hasMCPTools,
-           let behaviorPrompt = mcpClientManager?.toolBehaviorPrompt,
-           !behaviorPrompt.isEmpty {
-            history.insert(ChatMessage(role: .system, content: behaviorPrompt), at: 0)
+        if hasMCPTools {
+            let behaviorPrompt = mcpClientManager.toolBehaviorPrompt
+            if !behaviorPrompt.isEmpty {
+                history.insert(ChatMessage(role: .system, content: behaviorPrompt), at: 0)
+            }
         }
 
         return Array(history)
@@ -331,12 +312,8 @@ class ChatViewModel {
 
     /// Execute a native MLX ToolCall via MCPClientManager
     private func executeNativeToolCall(_ toolCall: ToolCall) async -> (result: String?, error: String?) {
-        guard let mcpClient = mcpClientManager else {
-            return (nil, "MCP client manager not available")
-        }
-
         do {
-            let result = try await mcpClient.callToolFromNative(
+            let result = try await mcpClientManager.callToolFromNative(
                 name: toolCall.function.name,
                 arguments: toolCall.function.arguments
             )
@@ -371,14 +348,14 @@ class ChatViewModel {
     // MARK: - Stop Generation
 
     func stopGeneration() {
-        llmService?.stopGeneration()
+        llmService.stopGeneration()
         isStreaming = false
         currentToolCall = nil
 
         // Persist inspector items so they survive conversation switches
-        if let convId = conversationId, let store = chatStore {
-            store.updateInspectorItems(inspectorItems, for: convId)
-            store.saveConversation(id: convId)
+        if let convId = conversationId {
+            chatStore.updateInspectorItems(inspectorItems, for: convId)
+            chatStore.saveConversation(id: convId)
         }
     }
 
@@ -393,7 +370,7 @@ class ChatViewModel {
         thinkBlockFinalized = false
 
         // Load persisted inspector items for the selected conversation
-        inspectorItems = chatStore?.currentConversation?.inspectorItems ?? []
+        inspectorItems = chatStore.currentConversation?.inspectorItems ?? []
     }
 
     // MARK: - Inspector Helpers
@@ -483,20 +460,17 @@ class ChatViewModel {
     // MARK: - AI Title Generation
 
     private func generateTitle(for conversationId: UUID, basedOn userMessage: String) async {
-        guard let store = chatStore,
-              let llm = llmService else { return }
-
         // Only generate if title is still default
-        guard let conv = store.conversations.first(where: { $0.id == conversationId }),
+        guard let conv = chatStore.conversations.first(where: { $0.id == conversationId }),
               conv.hasDefaultTitle else { return }
 
-        guard llm.state.isReady else {
-            store.updateTitle(String(userMessage.prefix(20)), for: conversationId)
+        guard llmService.state.isReady else {
+            chatStore.updateTitle(String(userMessage.prefix(20)), for: conversationId)
             return
         }
 
         let prompt = "Generate a very short title (max 5 words) for this chat message. Use the SAME language as the message. Reply with ONLY the title, nothing else. No thinking, no quotes, no explanation.\n\nMessage: \(userMessage)"
-        let stream = llm.chat(messages: [ChatMessage(role: .user, content: prompt)])
+        let stream = llmService.chat(messages: [ChatMessage(role: .user, content: prompt)])
 
         var raw = ""
         for await chunk in stream {
@@ -523,6 +497,6 @@ class ChatViewModel {
             title = String(title.prefix(40))
         }
 
-        store.updateTitle(title, for: conversationId)
+        chatStore.updateTitle(title, for: conversationId)
     }
 }

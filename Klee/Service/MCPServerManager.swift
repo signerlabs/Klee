@@ -7,6 +7,11 @@
 //  Lifecycle: KleeApp calls stopAll() on willTerminateNotification.
 //  Injected as @Environment(MCPServerManager.self) throughout the app.
 //
+//  Orphan process prevention: uses Pipe Heartbeat mechanism (same as VS Code / Claude Desktop).
+//  Parent holds write end of a pipe; child receives read fd via KLEE_HEARTBEAT_FD env var.
+//  When parent exits (even via SIGKILL), the write end closes automatically and the child
+//  detects EOF on the read end and can exit gracefully.
+//
 
 import Foundation
 import Observation
@@ -47,6 +52,11 @@ class MCPServerManager {
     /// Stdin pipes for writing to child process input (used by MCPClientManager for StdioTransport)
     private var stdinPipes: [UUID: Pipe] = [:]
 
+    /// Heartbeat pipes: parent holds write end; child monitors read end.
+    /// When parent exits (even via SIGKILL), the write end closes automatically,
+    /// and the child detects EOF on the read end and exits.
+    private var heartbeatPipes: [UUID: Pipe] = [:]
+
     // MARK: - Node.js Path
 
     /// Resolve the bundled Node.js binary path.
@@ -83,7 +93,7 @@ class MCPServerManager {
         ]
         for path in candidates {
             if FileManager.default.fileExists(atPath: path) {
-                return candidates[0]  // always prefer npx-cli.js
+                return path
             }
         }
         return nil
@@ -132,6 +142,15 @@ class MCPServerManager {
             } else {
                 environment["PATH"] = nodeDir
             }
+
+            // Heartbeat pipe: parent holds write end, child gets read fd via env var.
+            // When parent dies (even SIGKILL), the OS closes the write end automatically,
+            // and the child detects EOF on the read end and can self-terminate.
+            let heartbeatPipe = Pipe()
+            let heartbeatReadFD = heartbeatPipe.fileHandleForReading.fileDescriptor
+            environment["KLEE_HEARTBEAT_FD"] = String(heartbeatReadFD)
+            self.heartbeatPipes[server.id] = heartbeatPipe
+
             process.environment = environment
 
             // Stdio pipes for MCP protocol communication
@@ -181,6 +200,12 @@ class MCPServerManager {
             }
 
             try process.run()
+
+            // Close the parent's copy of the heartbeat read end — only the child needs it.
+            // The parent keeps the write end alive; when it closes (or the parent exits),
+            // the child detects EOF on its inherited read fd.
+            heartbeatPipe.fileHandleForReading.closeFile()
+
             serverStatuses[server.id] = .running
             print("[MCPServerManager] Started '\(server.name)' (PID: \(process.processIdentifier))")
 
@@ -193,7 +218,7 @@ class MCPServerManager {
     // MARK: - Stop Server
 
     /// Stop a running MCP server by ID.
-    /// Strategy: close stdin (MCP servers exit on stdin EOF) → SIGTERM → SIGKILL after 2s.
+    /// Strategy: close heartbeat pipe write end → close stdin → SIGTERM → SIGKILL after 2s.
     func stop(id: UUID) {
         guard let process = processes[id] else {
             serverStatuses[id] = .stopped
@@ -201,14 +226,18 @@ class MCPServerManager {
         }
 
         if process.isRunning {
-            // Close stdin pipe to signal MCP server to exit gracefully.
+            // Step 1: Close heartbeat pipe write end — the most graceful signal.
+            // Child processes monitoring KLEE_HEARTBEAT_FD will detect EOF and self-terminate.
+            heartbeatPipes[id]?.fileHandleForWriting.closeFile()
+
+            // Step 2: Close stdin pipe to signal MCP server to exit gracefully.
             // Most MCP servers (stdio transport) treat stdin EOF as shutdown signal.
             stdinPipes[id]?.fileHandleForWriting.closeFile()
 
-            // Also send SIGTERM for processes that don't monitor stdin
+            // Step 3: Send SIGTERM for processes that don't monitor stdin or heartbeat
             process.terminate()
 
-            // Force kill with SIGKILL if still running after 2 seconds
+            // Step 4: Force kill with SIGKILL if still running after 2 seconds (safety net)
             let pid = process.processIdentifier
             Task.detached {
                 try? await Task.sleep(for: .seconds(2))
@@ -271,6 +300,8 @@ class MCPServerManager {
             stderrPipe.fileHandleForReading.readabilityHandler = nil
         }
         processes[id] = nil
+        // Clean up heartbeat pipe (both ends)
+        heartbeatPipes[id] = nil
         // Note: Do NOT close stdin/stdout pipes here — MCPClientManager may still use them.
         // They will be cleaned up when MCPClientManager disconnects.
     }

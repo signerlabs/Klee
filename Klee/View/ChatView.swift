@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - ChatView
 
@@ -17,9 +16,8 @@ struct ChatView: View {
     @Environment(ChatStore.self) var chatStore
     @Environment(MCPClientManager.self) var mcpClientManager
     @Environment(\.openSettings) private var openSettings
-    @State private var viewModel = ChatViewModel()
+    @State private var viewModel: ChatViewModel?
     @State private var showInspector = false
-    @FocusState private var isInputFocused: Bool
 
     /// Throttle state for scroll-to-bottom
     @State private var lastScrollTime: Date = .distantPast
@@ -43,21 +41,56 @@ struct ChatView: View {
     /// instead of viewModel.messages (which requires onAppear to set chatStore).
     private var showWelcome: Bool {
         let msgs = chatStore.currentConversation?.messages ?? []
-        return msgs.isEmpty && !viewModel.isStreaming
+        return msgs.isEmpty && !(viewModel?.isStreaming ?? false)
     }
 
     var body: some View {
         Group {
+            if let viewModel {
+                chatContent(viewModel: viewModel)
+            } else {
+                Color.clear
+            }
+        }
+        .onAppear {
+            if viewModel == nil {
+                viewModel = ChatViewModel(
+                    llmService: llmService,
+                    chatStore: chatStore,
+                    mcpClientManager: mcpClientManager
+                )
+            }
+        }
+        .onChange(of: chatStore.selectedConversationId) {
+            trailingScrollTask?.cancel()
+            trailingScrollTask = nil
+            viewModel?.resetForNewConversation()
+        }
+        .onChange(of: showWelcome) { _, isWelcome in
+            showInspector = !isWelcome
+        }
+    }
+
+    // MARK: - Main Content
+
+    @ViewBuilder
+    private func chatContent(viewModel: ChatViewModel) -> some View {
+        Group {
             if showWelcome {
-                welcomeView
+                WelcomeView(
+                    needsModelDownload: needsModelDownload,
+                    onOpenSettings: { openSettings() }
+                ) {
+                    inputBar(viewModel: viewModel)
+                }
             } else {
                 VStack(spacing: 0) {
                     if let errorMessage {
                         errorBanner(message: errorMessage)
                     }
-                    messageList
+                    messageList(viewModel: viewModel)
                     Divider()
-                    inputBar
+                    inputBar(viewModel: viewModel)
                 }
             }
         }
@@ -78,30 +111,17 @@ struct ChatView: View {
                 .help("Toggle Inspector")
             }
         }
-        .onAppear {
-            viewModel.llmService = llmService
-            viewModel.chatStore = chatStore
-            viewModel.mcpClientManager = mcpClientManager
-        }
-        .onChange(of: chatStore.selectedConversationId) {
-            trailingScrollTask?.cancel()
-            trailingScrollTask = nil
-            viewModel.resetForNewConversation()
-        }
-        .onChange(of: showWelcome) { _, isWelcome in
-            showInspector = !isWelcome
-        }
     }
 
     // MARK: - Message List
 
-    private var messageList: some View {
+    private func messageList(viewModel: ChatViewModel) -> some View {
         ZStack {
             ScrollViewReader { proxy in
                 List {
                     ForEach(viewModel.messages) { message in
                         if !(message.role == .assistant && message.content.isEmpty && viewModel.isStreaming) {
-                            messageBubble(for: message)
+                            MessageBubbleView(message: message)
                                 .id(message.id)
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
@@ -113,7 +133,7 @@ struct ChatView: View {
                        let last = viewModel.messages.last,
                        last.role == .assistant,
                        last.content.isEmpty {
-                        thinkingBubble
+                        ThinkingBubbleView()
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
@@ -140,24 +160,30 @@ struct ChatView: View {
                     throttleScroll(proxy: proxy)
                 }
             }
-
         }
     }
 
-    /// Throttled scroll-to-bottom: at most once every 400ms, with a trailing scroll to catch the final update.
-    private func throttleScroll(proxy: ScrollViewProxy) {
-        let now = Date()
-        if now.timeIntervalSince(lastScrollTime) >= 0.4 {
-            lastScrollTime = now
-            proxy.scrollTo("chat-bottom", anchor: .bottom)
-        }
-        trailingScrollTask?.cancel()
-        trailingScrollTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(450))
-            guard !Task.isCancelled else { return }
-            lastScrollTime = Date()
-            proxy.scrollTo("chat-bottom", anchor: .bottom)
-        }
+    // MARK: - Input Bar
+
+    private func inputBar(viewModel: ChatViewModel) -> some View {
+        InputBarView(
+            inputText: Binding(
+                get: { viewModel.inputText },
+                set: { viewModel.inputText = $0 }
+            ),
+            pendingImageURLs: Binding(
+                get: { viewModel.pendingImageURLs },
+                set: { viewModel.pendingImageURLs = $0 }
+            ),
+            isStreaming: viewModel.isStreaming,
+            hasContent: viewModel.hasContent,
+            llmState: llmService.state,
+            currentModelSupportsVision: viewModel.currentModelSupportsVision,
+            onSend: { viewModel.sendMessage() },
+            onStop: { viewModel.stopGeneration() },
+            onPickImages: { viewModel.pickImages() },
+            onRemoveImage: { viewModel.removePendingImage(at: $0) }
+        )
     }
 
     // MARK: - Error Banner
@@ -187,297 +213,21 @@ struct ChatView: View {
         .padding(.top, 8)
     }
 
-    // MARK: - Welcome View
+    // MARK: - Scroll Throttle
 
-    /// Time-based greeting text
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 5..<12: return "Good Morning"
-        case 12..<17: return "Good Afternoon"
-        case 17..<22: return "Good Evening"
-        default: return "Good Night"
+    /// Throttled scroll-to-bottom: at most once every 400ms, with a trailing scroll to catch the final update.
+    private func throttleScroll(proxy: ScrollViewProxy) {
+        let now = Date()
+        if now.timeIntervalSince(lastScrollTime) >= 0.4 {
+            lastScrollTime = now
+            proxy.scrollTo("chat-bottom", anchor: .bottom)
         }
-    }
-
-    private var welcomeView: some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            // Greeting
-            VStack(spacing: 16) {
-                HStack(spacing: 20) {
-                    Image(.kleeLogo)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 50)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    Text(greeting)
-                        .font(.system(size: 32, weight: .bold))
-                        .foregroundStyle(.primary)
-                }
-                
-                Text("How can Klee help you today?")
-                    .foregroundStyle(.secondary)
-
-                if needsModelDownload {
-                    // Onboarding: prompt to download a model
-                    Text("Download a model to start chatting locally.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Button {
-                        openSettings()
-                    } label: {
-                        Label("Download a Model", systemImage: "arrow.down.to.line")
-                    }
-                    .controlSize(.large)
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 4)
-                }
-            }
-
-            Spacer()
-
-            // Centered input bar
-            inputBar
-                .frame(maxWidth: 600)
-                .padding(.bottom, 40)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Thinking Bubble
-
-    private var thinkingBubble: some View {
-        HStack {
-            HStack(spacing: 6) {
-                ThinkingIndicator()
-                Text("Implementing...")
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            Spacer(minLength: 60)
-        }
-    }
-
-    // MARK: - Message Bubble
-
-    @ViewBuilder
-    private func messageBubble(for message: ChatMessage) -> some View {
-        switch message.role {
-        case .user:
-            HStack {
-                Spacer(minLength: 60)
-                VStack(alignment: .trailing, spacing: 6) {
-                    // Show attached images if any
-                    if !message.imageURLs.isEmpty {
-                        messageImages(urls: message.imageURLs)
-                    }
-                    if !message.content.isEmpty {
-                        Text(message.content)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(8)
-                .foregroundStyle(.white)
-                .background(.accent)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-
-        case .assistant:
-            assistantBubbleContent(message.content)
-                .padding(8)
-
-        case .system:
-            HStack {
-                Spacer()
-                Text(message.content)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 4)
-                Spacer()
-            }
-        }
-    }
-
-    // MARK: - Assistant Bubble (clean text only; thinking/tool details are in Inspector)
-
-    @ViewBuilder
-    private func assistantBubbleContent(_ content: String) -> some View {
-        if !content.isEmpty {
-            MarkdownTextView(text: content)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // MARK: - Input Bar
-
-    private var inputBar: some View {
-        VStack(spacing: 8) {
-            // Pending image thumbnails
-            if !viewModel.pendingImageURLs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(viewModel.pendingImageURLs.enumerated()), id: \.offset) { index, url in
-                            imageThumbnail(url: url, index: index)
-                        }
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .frame(height: 72)
-            }
-
-            TextField("Type a message...", text: $viewModel.inputText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...8)
-                .focused($isInputFocused)
-                .disabled(viewModel.isStreaming)
-                .onKeyPress(.return, phases: .down) { event in
-                    if event.modifiers.contains(.shift) { return .ignored }
-                    viewModel.sendMessage()
-                    return .handled
-                }
-
-            HStack(spacing: 12) {
-                if llmService.state == .loading {
-                    Text("Loading model...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if llmService.state == .idle {
-                    Text("Select a model to start")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                // Image attach button (visible when current model supports vision)
-                if viewModel.currentModelSupportsVision {
-                    Button {
-                        viewModel.pickImages()
-                    } label: {
-                        Image(systemName: "photo.badge.plus")
-                            .font(.system(size: 18))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.isStreaming)
-                    .help("Attach images")
-                }
-
-                Spacer()
-
-                if viewModel.isStreaming {
-                    Button {
-                        viewModel.stopGeneration()
-                    } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundStyle(.red.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Stop generating")
-                } else {
-                    Button(action: viewModel.sendMessage) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 24))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!viewModel.hasContent || llmService.state != .ready)
-                }
-            }
-        }
-        .padding(12)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(.tertiary, lineWidth: 1)
-        )
-        .onDrop(of: [.image], isTargeted: nil) { providers in
-            guard viewModel.currentModelSupportsVision else { return false }
-            for provider in providers {
-                provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { data, _ in
-                    if let url = data as? URL {
-                        Task { @MainActor in
-                            viewModel.pendingImageURLs.append(url)
-                        }
-                    } else if let data = data as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        Task { @MainActor in
-                            viewModel.pendingImageURLs.append(url)
-                        }
-                    }
-                }
-            }
-            return true
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    // MARK: - Image Thumbnail
-
-    /// Thumbnail preview for a pending image attachment
-    private func imageThumbnail(url: URL, index: Int) -> some View {
-        ZStack(alignment: .topTrailing) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                case .failure:
-                    Image(systemName: "photo")
-                        .foregroundStyle(.secondary)
-                default:
-                    ProgressView()
-                }
-            }
-            .frame(width: 64, height: 64)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            // Remove button
-            Button {
-                viewModel.removePendingImage(at: index)
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white)
-                    .background(Circle().fill(.black.opacity(0.5)))
-            }
-            .buttonStyle(.plain)
-            .offset(x: 4, y: -4)
-        }
-    }
-
-    // MARK: - User Message Image Display
-
-    /// Display attached images in a user message bubble
-    private func messageImages(urls: [String]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(urls, id: \.self) { urlString in
-                    if let url = URL(string: urlString) {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                            case .failure:
-                                Image(systemName: "photo")
-                                    .foregroundStyle(.white.opacity(0.6))
-                            default:
-                                ProgressView()
-                            }
-                        }
-                        .frame(width: 120, height: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-            }
+        trailingScrollTask?.cancel()
+        trailingScrollTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            lastScrollTime = Date()
+            proxy.scrollTo("chat-bottom", anchor: .bottom)
         }
     }
 }

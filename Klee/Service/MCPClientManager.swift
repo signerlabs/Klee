@@ -178,11 +178,11 @@ class MCPClientManager {
     func callTool(name: String, arguments: [String: Value]?) async throws -> String {
         // Find the server that owns this tool
         guard let tool = allTools.first(where: { $0.name == name }) else {
-            throw MCPClientError.toolNotFound(name)
+            throw KleeError.toolNotFound(name)
         }
 
         guard let client = clients[tool.serverId] else {
-            throw MCPClientError.serverNotConnected(tool.serverName)
+            throw KleeError.serverNotConnected(tool.serverName)
         }
 
         let result = try await client.callTool(name: name, arguments: arguments)
@@ -190,7 +190,7 @@ class MCPClientManager {
         // Check if the server reported an error
         if result.isError == true {
             let errorText = result.content.map { contentToString($0) }.joined(separator: "\n")
-            throw MCPClientError.toolExecutionFailed(name, errorText)
+            throw KleeError.toolExecutionFailed(name, errorText)
         }
 
         // Serialize content to string
@@ -298,21 +298,3 @@ class MCPClientManager {
     }
 }
 
-// MARK: - Errors
-
-enum MCPClientError: LocalizedError {
-    case toolNotFound(String)
-    case serverNotConnected(String)
-    case toolExecutionFailed(String, String)
-
-    var errorDescription: String? {
-        switch self {
-        case .toolNotFound(let name):
-            return "Tool '\(name)' not found in any connected MCP server."
-        case .serverNotConnected(let name):
-            return "MCP server '\(name)' is not connected."
-        case .toolExecutionFailed(let name, let detail):
-            return "Tool '\(name)' execution failed: \(detail)"
-        }
-    }
-}

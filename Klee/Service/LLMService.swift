@@ -13,12 +13,6 @@ import MLXLLM
 import MLXVLM
 @preconcurrency import MLXLMCommon
 
-/// A single piece of generation output — either a text chunk or a tool call.
-enum GenerationChunk: Sendable {
-    case text(String)
-    case toolCall(ToolCall)
-}
-
 @Observable
 class LLMService {
 
