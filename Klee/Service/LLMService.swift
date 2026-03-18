@@ -36,6 +36,20 @@ class LLMService {
     /// Current generation speed in tokens/second
     private(set) var tokensPerSecond: Double = 0
 
+    // MARK: - Detailed Performance Metrics
+
+    /// Time to first token (TTFT / prefill) in milliseconds
+    private(set) var lastPrefillTimeMs: Double = 0
+
+    /// Decode speed in tokens/second (excludes prefill time)
+    private(set) var lastDecodeTokensPerSec: Double = 0
+
+    /// Total tokens generated in the last run
+    private(set) var lastTotalTokens: Int = 0
+
+    /// Total generation wall-clock time in milliseconds
+    private(set) var lastTotalTimeMs: Double = 0
+
     // MARK: - Private Properties
 
     /// The loaded model container
@@ -157,6 +171,10 @@ class LLMService {
 
                 self.state = .generating
                 self.tokensPerSecond = 0
+                self.lastPrefillTimeMs = 0
+                self.lastDecodeTokensPerSec = 0
+                self.lastTotalTokens = 0
+                self.lastTotalTimeMs = 0
 
                 do {
                     // Build MLX Chat.Message array, attaching images to the last user message
@@ -188,11 +206,16 @@ class LLMService {
 
                     var tokenCount = 0
                     let startTime = Date()
+                    var firstTokenTime: Date?
 
                     for await result in generateStream {
                         if Task.isCancelled { break }
 
                         if let text = result.chunk {
+                            // Record TTFT on the very first token
+                            if firstTokenTime == nil {
+                                firstTokenTime = Date()
+                            }
                             continuation.yield(.text(text))
                             tokenCount += 1
                         }
@@ -201,11 +224,29 @@ class LLMService {
                         }
                     }
 
-                    // Calculate tok/s
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    if elapsed > 0 {
-                        self.tokensPerSecond = Double(tokenCount) / elapsed
+                    // Only record metrics for complete (non-cancelled) generations
+                    if !Task.isCancelled {
+                        let totalTime = Date().timeIntervalSince(startTime)
+                        let prefillTime = firstTokenTime?.timeIntervalSince(startTime) ?? totalTime
+                        let decodeTime = totalTime - prefillTime
+
+                        self.lastPrefillTimeMs = prefillTime * 1000
+                        self.lastTotalTimeMs = totalTime * 1000
+                        self.lastTotalTokens = tokenCount
+
+                        if decodeTime > 0 && tokenCount > 1 {
+                            // Decode speed: exclude the first token (counted during prefill)
+                            self.lastDecodeTokensPerSec = Double(tokenCount - 1) / decodeTime
+                        } else {
+                            self.lastDecodeTokensPerSec = 0
+                        }
+
+                        // Overall tok/s (kept for backward compatibility)
+                        self.tokensPerSecond = tokenCount > 0 ? Double(tokenCount) / totalTime : 0
+
+                        print("[LLMService] TTFT: \(String(format: "%.0f", prefillTime * 1000))ms | Decode: \(String(format: "%.1f", self.lastDecodeTokensPerSec)) tok/s | Total: \(tokenCount) tokens in \(String(format: "%.1f", totalTime))s | Overall: \(String(format: "%.1f", self.tokensPerSecond)) tok/s")
                     }
+
                     self.state = .ready
 
                 } catch {

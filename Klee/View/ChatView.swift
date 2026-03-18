@@ -148,6 +148,14 @@ struct ChatView: View {
                         }
                     }
 
+                    // Performance metrics row: shown after the last assistant reply finishes
+                    if !viewModel.isStreaming,
+                       let last = viewModel.messages.last,
+                       last.role == .assistant,
+                       llmService.tokensPerSecond > 0 {
+                        performanceMetricsRow
+                    }
+
                     // Invisible bottom anchor
                     Color.clear
                         .frame(height: 1)
@@ -219,6 +227,44 @@ struct ChatView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 12)
         .padding(.top, 8)
+    }
+
+    // MARK: - Performance Metrics
+
+    /// Compact performance stats shown below the latest assistant reply.
+    /// Uses detailed metrics from LLMService when available,
+    /// falls back to the aggregate tokensPerSecond otherwise.
+    private var performanceMetricsRow: some View {
+        HStack {
+            Text(performanceMetricsText)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Spacer()
+        }
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 4, trailing: 16))
+        .id("perf-metrics")
+    }
+
+    /// Build the metrics display string.
+    /// Full format:   ⚡ {TTFT}s · {decode_speed} tok/s · {total_tokens} tokens
+    /// Fallback:      ⚡ {overall_speed} tok/s
+    private var performanceMetricsText: String {
+        let prefillMs   = llmService.lastPrefillTimeMs
+        let decodeTps   = llmService.lastDecodeTokensPerSec
+        let totalTokens = llmService.lastTotalTokens
+
+        if totalTokens > 0, decodeTps > 0 {
+            // Detailed metrics available from LLMService
+            let ttftSec = String(format: "%.1f", prefillMs / 1000)
+            let speed   = String(format: "%.1f", decodeTps)
+            return "\u{26A1} \(ttftSec)s \u{00B7} \(speed) tok/s \u{00B7} \(totalTokens) tokens"
+        } else {
+            // Fallback: only aggregate speed
+            let speed = String(format: "%.1f", llmService.tokensPerSecond)
+            return "\u{26A1} \(speed) tok/s"
+        }
     }
 
     // MARK: - Scroll Throttle

@@ -12,12 +12,22 @@ struct ChatConfigView: View {
     @Environment(LLMService.self) var llmService
     @Environment(ModelManager.self) var modelManager
     @Environment(ModuleManager.self) var moduleManager
-    @Environment(DownloadManager.self) var downloadManager
 
     var body: some View {
         Form {
             Section("Model") {
                 modelSelectionSection
+
+                // Show recent decode speed for the loaded model (prefer detailed metric)
+                if llmService.lastDecodeTokensPerSec > 0 {
+                    Text("\(String(format: "%.1f", llmService.lastDecodeTokensPerSec)) tok/s")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if llmService.tokensPerSecond > 0 {
+                    Text("\(String(format: "%.1f", llmService.tokensPerSecond)) tok/s")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Modules") {
