@@ -17,7 +17,7 @@
 - 完全本地推理，数据私密
 - Apple Silicon 原生优化，性能最优（MLX 引擎比 llama.cpp 快 21%-87%）
 - 原生 SwiftUI，体积小、内存低、Mac 系统深度整合
-- 模块化扩展：Swift 原生 Service + MCP 双通道，按需启用
+- 模块化扩展：Swift 原生 Service，按需启用，无外部进程依赖
 
 ---
 
@@ -50,7 +50,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Klee.app (SwiftUI macOS)                                │
+│  Klee.app (SwiftUI macOS) — 纯 Swift，零外部进程         │
 │                                                          │
 │  ┌────────────────────────────────────────────────────┐  │
 │  │  UI 层：SwiftUI 原生界面                            │  │
@@ -62,18 +62,16 @@
 │  │  模型加载 / 流式推理 / Metal GPU / 量化(3-8bit)     │  │
 │  └────────────────────────────────────────────────────┘  │
 │                          │                               │
-│         ┌────────────────┼────────────────┐              │
-│         ▼                ▼                ▼              │
-│  ┌─────────────┐  ┌────────────┐  ┌──────────────────┐  │
-│  │ Module Layer │  │ Skill Layer│  │ MCP Layer        │  │
-│  │ (Swift 原生  │  │ (渐进式    │  │ (有状态/持久连接) │  │
-│  │  Service)    │  │  上下文)   │  │ Playwright/FS   │  │
-│  │ XHS/Bili/... │  │            │  │ 第三方 MCP      │  │
-│  └─────────────┘  └────────────┘  └──────────────────┘  │
-│         │                                    │           │
-│         ▼                                    ▼           │
-│    URLSession                         Node.js 子进程     │
-│   (统一 HTTP)                         (内嵌 LTS)        │
+│         ┌────────────────┴────────────────┐              │
+│         ▼                                 ▼              │
+│  ┌─────────────────────┐  ┌────────────────────────┐    │
+│  │ Module Layer         │  │ Skill Layer             │    │
+│  │ (Swift 原生 Service) │  │ (渐进式上下文注入)       │    │
+│  │ XHS / Bili / Weibo   │  │ ~120 tokens/模块        │    │
+│  └──────────┬──────────┘  └────────────────────────┘    │
+│             │                                            │
+│             ▼                                            │
+│       URLSession (统一 HTTP 层)                           │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -85,13 +83,12 @@ Klee.app/
     ├── MacOS/
     │   └── Klee              # SwiftUI 主程序（含 MLX 引擎 + 模块 Service，静态链接）
     ├── Resources/
-    │   ├── node/             # 内嵌 Node.js LTS (~104MB, 仅用于 MCP Server)
-    │   │   ├── bin/node
-    │   │   └── lib/node_modules/
     │   └── QwenChatTemplate.txt
     └── Frameworks/
         └── (MLX Metal shaders 等)
 ```
+
+**不含任何外部运行时**——无 Node.js、无 Python、无子进程。所有模块能力编译进 Klee 本体。
 
 ### App Bundle 体积预估
 
@@ -99,11 +96,10 @@ Klee.app/
 |------|------|
 | Klee SwiftUI 本体 + MLX 引擎 + 模块 Service | ~65 MB |
 | Metal shaders (mlx.metallib) | ~10 MB |
-| Node.js LTS darwin-arm64 binary | ~104 MB |
-| **总计** | **~180 MB** |
-| DMG 压缩后 | **~110 MB** |
+| **总计** | **~75 MB** |
+| DMG 压缩后 | **~40 MB** |
 
-竞品参考：Claude Desktop ~400MB，Cursor ~500MB，LM Studio ~300MB（Electron）。
+竞品参考：Swama ~30MB（仅 CLI），LM Studio ~300MB，Claude Desktop ~400MB，Cursor ~500MB。**Klee 是功能最完整的方案中体积最小的。**
 
 模型文件不打包进 app，首次使用时按需下载到 `~/Library/Caches/models/`。
 
@@ -148,7 +144,7 @@ Apple 在 WWDC 2025 发布的系统内置 LLM API，3B 参数模型：
 - **缺点**：只有 Apple 的 3B 模型，不可更换，能力有限
 - **策略**：作为**补充功能**（摘要、分类等轻量任务），不作为核心聊天引擎
 
-### 无状态 API → Swift 原生 Service / 有状态长连接 → MCP
+### 为什么不用 MCP 而用 Swift 原生 Service
 
 本地模型上下文窗口远小于云端：
 
@@ -158,7 +154,13 @@ Apple 在 WWDC 2025 发布的系统内置 LLM API，3B 参数模型：
 | DeepSeek R1 8B | ~8-16K tokens | — |
 | Claude Sonnet (云端) | 200K tokens | **6-25 倍** |
 
-**上下文窗口是本地模型最稀缺的资源。** 详见第六章模块化架构。
+**上下文窗口是本地模型最稀缺的资源。** MCP 协议要求将工具 JSON Schema 完整注入上下文（26 个工具 ≈ 3,600 tokens），对本地模型是不可承受之重。Swift 原生 Service 通过 Skill 描述（~120 tokens/模块）实现同等能力，**上下文效率提升 30-50 倍**。详见第六章。
+
+此外，移除 MCP 还带来：
+- **体积减半**：去掉 Node.js 运行时（104MB），App 从 ~180MB 降至 ~75MB
+- **签名简化**：不再需要 JIT entitlement，可能重回 App Store 分发
+- **零进程管理**：无子进程生命周期、无孤儿进程问题
+- **架构纯净**：纯 Swift 进程内调用，无 IPC 开销
 
 ---
 
@@ -450,13 +452,13 @@ Swift 原生方案（4个模块）:
 
 ### 6.2 Swift 原生 Service 架构
 
-**决策：无状态 API 调用 → Swift 原生 Service；有状态/持久连接 → MCP。**
+**所有模块能力均通过 Swift 原生 Service 实现，无外部进程依赖。**
 
-去掉 CLI Executor 中间层，LLM 直接调用 Swift Service：
+LLM 识别意图后直接调用 Swift Service 方法：
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Klee App                                                │
+│  Klee App — 纯 Swift，零外部进程                          │
 │                                                          │
 │  ┌─────────────┐   ┌───────────────┐   ┌──────────────┐ │
 │  │ Module       │──▶│ Skill Layer   │──▶│ Local LLM    │ │
@@ -478,11 +480,6 @@ Swift 原生方案（4个模块）:
 │       └────────────┴────────────┴──────────────┘         │
 │                        URLSession                        │
 │                     (统一 HTTP 层)                        │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │ MCP Layer (Reserved)                              │    │
-│  │ Playwright / Filesystem / Other stateful tools    │    │
-│  └──────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -496,7 +493,26 @@ Swift 原生方案:
   → 格式化为文本回传 LLM
 ```
 
-### 6.3 Module Manager（模块管理器）
+### 6.3 两层能力模型：内置能力 + 平台模块
+
+#### 内置能力（默认开启，无需配置）
+
+文件读写和网页获取是 Klee 的基础能力，**不作为模块呈现**，Skill 描述直接写死在系统提示词中：
+
+```
+你是 Klee，一个运行在 macOS 上的本地 AI 助手。
+你可以读写本地文件（桌面、文档、下载等目录），也可以获取网页内容。
+```
+
+这些能力通过 Swift 原生 API 实现（FileManager、URLSession），无需用户操作，无需登录。
+
+#### 平台模块（用户手动开启，需要登录）
+
+小红书、抖音、B站等平台模块**需要用户主动启用**，原因：
+- **登录前置**：未登录的模块注入 Skill 描述只会导致 LLM 识别意图后执行失败
+- **意图精准**：用户只用 3 个平台就只注入 3 个 Skill（360 tokens），减少歧义
+- **法律风险**：逆向 API 模块需用户主动选择启用
+- **首次体验**：新用户先聊天，不需要看到一堆平台模块
 
 ```swift
 struct KleeModule: Codable, Identifiable {
@@ -504,15 +520,27 @@ struct KleeModule: Codable, Identifiable {
     let name: String            // "小红书"
     let icon: String            // "note.text" (SF Symbol)
     let skillPrompt: String     // 自然语言能力描述 (~120 tokens)
-    var isEnabled: Bool
+    var isEnabled: Bool         // 用户手动开启
+    var isAuthenticated: Bool   // 是否已完成登录
 }
 ```
 
-UI 呈现：类似现有 Settings → Connectors 的交互模式。
+UI 呈现：**Settings → Modules**（替代原 Connectors 面板），更像 iPhone 设置里的账号管理——开启时触发登录流程。
+
+#### 上下文成本分析
+
+| 场景 | 注入内容 | Token 开销 | 占 32K 比例 |
+|------|---------|-----------|-----------|
+| 纯聊天（无模块） | 内置能力描述 | ~60 tokens | 0.2% |
+| 开启 3 个平台模块 | 内置 + 3×Skill | ~420 tokens | 1.3% |
+| 开启 10 个平台模块 | 内置 + 10×Skill | ~1,260 tokens | 3.8% |
+| 开启 20 个平台模块 | 内置 + 20×Skill | ~2,460 tokens | 7.5% |
+
+对比 MCP 的 4 个模块就占 25%，**Swift Skill 模式即使 20 个模块全开也不到 8%**。上下文不是限制因素，模块 toggle 的意义在于**管理登录状态和用户意图**。
 
 ### 6.4 Skill Layer（技能描述层）
 
-每个模块对应一段精简的自然语言 Skill 描述，仅在模块启用时注入系统提示词。
+每个平台模块对应一段精简的自然语言 Skill 描述，仅在模块**已启用且已登录**时注入系统提示词。
 
 **示例（小红书模块 Skill Prompt，约 120 tokens）：**
 
@@ -528,7 +556,8 @@ UI 呈现：类似现有 Settings → Connectors 的交互模式。
 | 阶段 | 加载内容 | Token 开销 |
 |------|---------|-----------|
 | 未启用 | 不加载 | 0 |
-| 已启用 | Skill Prompt | ~120/模块 |
+| 已启用但未登录 | 不加载（避免执行失败） | 0 |
+| 已启用且已登录 | Skill Prompt | ~120/模块 |
 | 执行时 | 意图识别 + 方法调用 | 按需 |
 
 ### 6.5 小红书模块技术方案（试点）
@@ -583,62 +612,46 @@ UI 呈现：类似现有 Settings → Connectors 的交互模式。
 
 ---
 
-## 七、MCP Agent 层（保留层）
+## 七、为什么移除 MCP + Node.js
 
-MCP 基础设施不废弃，继续用于需要持久连接的场景。
+Klee v1.x 曾实现了完整的 MCP Agent 层（Swift MCP Client + 内嵌 Node.js LTS + Connector UI）。经过实际使用和架构评估，决定**完全移除**：
 
-### 架构决策：Swift MCP SDK + 内嵌 Node.js LTS
+| 问题 | 说明 |
+|------|------|
+| **体积代价** | Node.js 运行时占 App 58%（104MB / 180MB），移除后 App 仅 ~75MB |
+| **上下文浪费** | MCP 工具 Schema 注入消耗 3,600+ tokens，Swift Skill 描述仅需 ~120 tokens |
+| **签名复杂** | Node.js 需要 `allow-jit` 等高危 entitlement，阻止 App Store 分发 |
+| **进程管理** | 子进程生命周期、Pipe Heartbeat、孤儿进程 — 增加 ~650 行代码和运维复杂度 |
+| **架构方向** | 模块化路线确定为 Swift 原生 Service，MCP 成为冗余中间层 |
+| **实际使用** | 仅 2 个内置 Connector（Filesystem / Playwright），均可 Swift 原生替代 |
 
-| 方案 | 评估结果 |
-|---|---|
-| **方案 A：包 OpenClaw 进 Klee** | ❌ node_modules ~1.4GB；破坏零配置架构 |
-| Bun 替代 Node.js | ❌ Playwright MCP 确认无响应（Issue #25861），native addon 兼容率仅 34% |
-| **方案 B：Swift MCP SDK + 内嵌 Node.js LTS** | ✅ 已实施 |
+**替代方案**：
+- Filesystem → `FileManager` 原生实现（~200 行 Swift）
+- Web 内容获取 → `URLSession` + HTML 解析（无需 Playwright 控制浏览器）
+- 所有模块能力 → Swift 原生 Service（编译进 App，零进程开销）
 
-### MCP 工具调用链路
+**代码清理范围**（待执行）：
 
-```
-MLX 推理 → 检测 tool_call → Swift MCP Client → (stdio) → MCP Server → 返回结果
-                                                                         ↓
-                                                                 追加到对话历史
-                                                                         ↓
-                                                                 MLX 再次推理
-```
-
-### Swift MCP Client SDK
-
-- **仓库**：`modelcontextprotocol/swift-sdk` v0.11.0，官方维护，Apache 2.0
-- **SPM 引入**：`.package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.11.0")`
-
-### 内嵌 Node.js + 社区 MCP Server
-
-| Server | 用途 | 启动命令 |
-|---|---|---|
-| `@playwright/mcp` | 浏览器自动化 | `npx @playwright/mcp` |
-| `@modelcontextprotocol/server-filesystem` | 本地文件操作 | `npx @modelcontextprotocol/server-filesystem` |
-| `@notionhq/notion-mcp-server` | Notion 读写 | `npx @notionhq/notion-mcp-server` |
-
-### 防孤儿进程（Pipe Heartbeat 方案）
-
-macOS 无 `prctl(PR_SET_PDEATHSIG)`，使用 pipe 监控替代（VS Code / Claude Desktop 同款方案）：
-
-```swift
-// 父进程（Klee）持有 heartbeat pipe 写端
-// 通过 KLEE_HEARTBEAT_FD 环境变量将读端 fd 传给子进程
-// Klee 无论以何种方式退出（包括 SIGKILL），pipe 写端自动关闭
-// 子进程检测到 EOF 后自行退出
-```
-
-### MCP 与 Swift Service 的边界
-
-| 特征 | → Swift 原生 Service | → MCP |
-|------|---------------------|-------|
-| 无状态 API 调用 | ✅ | |
-| 有状态/长连接 | | ✅ |
-| 需要浏览器控制 | | ✅ (Playwright) |
-| 需要文件系统监控 | | ✅ |
-| 对上下文敏感 | ✅ (更省 token) | |
-| 第三方 npm MCP Server | | ✅ |
+| 操作 | 文件/目录 | 说明 |
+|------|----------|------|
+| **删除** | `Service/MCPClientManager.swift` | MCP 客户端 |
+| **删除** | `Service/MCPServerManager.swift` | MCP 子进程管理 |
+| **删除** | `Service/MCPServerStore.swift` | MCP 配置持久化 |
+| **删除** | `Model/MCPServerConfig.swift` | MCP 配置模型（含 BuiltInConnector） |
+| **删除** | `View/MCPServerListView.swift` | Connectors 列表 UI |
+| **删除** | `View/MCPServerEditView.swift` | Connector 编辑表单 |
+| **删除** | `View/InspectorView.swift` | 右侧 Inspector 面板（思考/工具调用） |
+| **删除** | `Resources/node/` | Node.js 运行时（释放 104MB） |
+| **移除** | SPM 依赖 `modelcontextprotocol/swift-sdk` | MCP Swift SDK |
+| 简化 | `KleeApp.swift` | 移除 MCP 相关 Environment 注入和 autoConnect |
+| 简化 | `ChatViewModel.swift` | 移除 tool calling 循环 |
+| **改造** | `ChatView.swift` | 思考内容（`<think>`）改为内联渲染（正式回复前显示，回复后折叠） |
+| **改造** | `SettingsView.swift` | 移除 Connectors 面板，Settings 仅保留 Models + About |
+| **新建** | `View/ChatConfigView.swift` | 右侧配置面板（模型选择 + 模块 toggle），替代 InspectorView |
+| **新建** | `View/ThinkingBlockView.swift` | 内联可折叠思考块（中间聊天栏内） |
+| **新建** | `View/ModuleListView.swift` | 模块列表 + toggle（嵌入 ChatConfigView） |
+| **新建** | `Service/ModuleManager.swift` | 模块注册、启用/禁用、登录状态管理 |
+| **新建** | `Model/KleeModule.swift` | 模块数据模型（替代 MCPServerConfig） |
 
 ---
 
@@ -646,17 +659,17 @@ macOS 无 `prctl(PR_SET_PDEATHSIG)`，使用 pipe 监控替代（VS Code / Claud
 
 ### 全球本地推理桌面客户端格局（2026 Q1）
 
-| 产品 | 框架 | 推理引擎 | MCP Agent | 模块化 | 开源 |
-|------|------|---------|-----------|--------|------|
-| **Klee** | **SwiftUI 原生** | **MLX Swift** | **✅** | **Swift 原生** | 是 |
-| LM Studio | Electron | llama.cpp + MLX | ✅ v0.3.17+ | ❌ | 部分 |
-| Jan.ai | Electron | Cortex.cpp | ✅ | ❌ | AGPLv3 |
-| Swama | SwiftUI 菜单栏 | **MLX Swift** | ❌ | ❌ | MIT |
-| oMLX | Python CLI | **MLX** (优化版) | ❌ | ❌ | Apache 2.0 |
-| GPT4All | Qt/QML | llama.cpp | ❌ | ❌ | MIT |
-| Cherry Studio | Electron | 桥接 Ollama | ✅ | ❌ | 是 |
+| 产品 | 框架 | 推理引擎 | 模块化 | App 体积 | 开源 |
+|------|------|---------|--------|---------|------|
+| **Klee** | **SwiftUI 原生** | **MLX Swift** | **Swift 原生 Service** | **~75 MB** | 是 |
+| LM Studio | Electron | llama.cpp + MLX | ❌ | ~300 MB | 部分 |
+| Jan.ai | Electron | Cortex.cpp | ❌ | ~250 MB | AGPLv3 |
+| Swama | SwiftUI 菜单栏 | **MLX Swift** | ❌ | ~30 MB (仅 CLI) | MIT |
+| oMLX | Python CLI | **MLX** (优化版) | ❌ | — | Apache 2.0 |
+| GPT4All | Qt/QML | llama.cpp | ❌ | ~200 MB | MIT |
+| Cherry Studio | Electron | 桥接 Ollama | ❌ | ~300 MB | 是 |
 
-**Klee 的独特定位：全球唯一同时具备 MLX Swift 原生推理 + SwiftUI 原生 UI + MCP Agent + 模块化平台的本地 AI 客户端。**
+**Klee 的独特定位：全球唯一同时具备 MLX Swift 原生推理 + SwiftUI 原生 UI + Swift 原生模块化平台的本地 AI 客户端。纯 Swift 零外部依赖，~75MB 体积。**
 
 ### 关键竞品详解
 
@@ -674,7 +687,7 @@ macOS 无 `prctl(PR_SET_PDEATHSIG)`，使用 pipe 监控替代（VS Code / Claud
 
 ### 时间窗口
 
-MLX + MCP + 模块化的原生 SwiftUI 组合，市场空白期约 **6-12 个月**。
+MLX + 模块化的纯原生 SwiftUI 组合，市场空白期约 **6-12 个月**。
 
 ---
 
@@ -697,33 +710,29 @@ MLX + MCP + 模块化的原生 SwiftUI 组合，市场空白期约 **6-12 个月
 
 > **这是第三优先级。** 功能开发完成后再执行。
 
-### 为什么不走 App Store
+### 分发方式选择
 
-- Sandbox 禁止 spawn 子进程（Node.js / MCP Server）
-- Node.js runtime 被 Apple 拒绝
-- 从一开始就用 Developer ID 分发
+移除 Node.js 后，Klee 成为纯 Swift 应用，**App Store 分发重新成为可能**：
+
+| 方式 | 优点 | 缺点 | 适用阶段 |
+|------|------|------|---------|
+| **App Store** | 自动更新、信任度高、触达广 | 审核周期、30% 分成（如有 IAP） | 长期目标 |
+| **Developer ID** | 快速迭代、无审核 | 需自建更新机制 | 早期阶段 |
+
+**建议**：早期用 Developer ID 快速迭代，稳定后上 App Store。
 
 ### Xcode 配置
 
-- Certificate：`Developer ID Application`
-- App Sandbox：**关闭**
+- Certificate：`Developer ID Application`（早期）/ App Store（后期）
+- App Sandbox：**可开启**（移除 Node.js 后无子进程限制，仅需文件读写权限）
 - Hardened Runtime：**开启**
 
 ### 签名流程
 
+移除 Node.js 后签名极其简单（无需 JIT entitlement）：
+
 ```bash
 IDENTITY="Developer ID Application: 你的名字 (TEAMID)"
-
-# 1. Sign native modules (.node files)
-find Klee.app/Contents/Resources/node/lib -name "*.node" \
-  -exec codesign --force --sign "$IDENTITY" --options runtime --timestamp {} \;
-
-# 2. Sign Node.js binary (needs JIT entitlements)
-codesign --force --sign "$IDENTITY" --options runtime --timestamp \
-  --entitlements node.entitlements \
-  Klee.app/Contents/Resources/node/bin/node
-
-# 3. Sign app bundle (last)
 codesign --force --sign "$IDENTITY" --options runtime --timestamp Klee.app
 ```
 
@@ -789,7 +798,7 @@ Info.plist：`SUFeedURL` → `https://klee.app/appcast.xml`，`SUScheduledCheckI
 ### 已完成
 
 - [x] **Phase 1：本地聊天** — MLX 推理、模型管理、对话历史、Settings
-- [x] **Phase 2：MCP Agent** — Swift MCP Client、Node.js 子进程、Connector UI、Inspector、Pipe Heartbeat
+- [x] **Phase 2：MCP Agent** — Swift MCP Client、Node.js 子进程、Connector UI、Inspector（**已决定移除，见第七章**）
 - [x] **Phase 3a：多模态 VLM** — Qwen 3.5 图像输入支持
 - [x] **代码架构重构** — DownloadManager 拆分、依赖注入改造、View 拆分、错误类型统一
 
@@ -800,13 +809,63 @@ Info.plist：`SUFeedURL` → `https://klee.app/appcast.xml`，`SUScheduledCheckI
  P0  性能优化 — 让推理速度回到可用状态
 ═══════════════════════════════════════════════════════════
 
-Phase A: 依赖升级 + 诊断（1-2 天）
+Phase A: 移除 MCP + Node.js，UI 重构（3-5 天）
+│
+├── 1. MCP 清理
+│   ├── 删除 MCP 文件（MCPClientManager, MCPServerManager, MCPServerStore 等）
+│   ├── 删除 Resources/node/（释放 104MB）
+│   ├── 移除 SPM 依赖 modelcontextprotocol/swift-sdk
+│   └── 简化 KleeApp / ChatViewModel（移除 tool calling 循环）
+│
+├── 2. 内置能力（默认开启，无 UI）
+│   ├── FileManager 文件读写
+│   └── URLSession 网页获取
+│
+├── 3. UI 重构：三栏布局改造
+│   │
+│   │  ┌──────────┬─────────────────────────┬────────────┐
+│   │  │ Sidebar  │     Chat (Center)       │ Config     │
+│   │  │          │                         │ (Right)    │
+│   │  │ 对话列表  │  <think> 思考过程        │            │
+│   │  │          │  (正式回复前显示，        │ 模型选择    │
+│   │  │          │   回复后折叠/隐藏)       │ (Picker)   │
+│   │  │          │                         │            │
+│   │  │          │  AI 回复内容             │ 平台模块    │
+│   │  │          │                         │ ☑ 小红书   │
+│   │  │          │  用户输入               │ ☐ 抖音     │
+│   │  │          │                         │ ☐ B站     │
+│   │  │          │                         │ ☐ Notion  │
+│   │  └──────────┴─────────────────────────┴────────────┘
+│   │
+│   ├── Inspector 面板 → Chat Config 面板（右侧边栏）
+│   │   ├── 模型选择（Picker，当前已下载模型列表）
+│   │   ├── 平台模块 Toggle 列表（已启用 + 登录状态）
+│   │   └── SwiftUI 原生 .inspector()，极简风格
+│   │
+│   ├── 思考过程（<think> 块）移至中间聊天栏
+│   │   ├── 正式回复前：内联渲染思考内容（浅色背景 + 折叠三角）
+│   │   ├── 正式回复后：自动折叠/隐藏（点击可展开）
+│   │   └── 不再需要 InspectorView 组件
+│   │
+│   ├── 删除：InspectorView.swift（右侧 Inspector 面板）
+│   ├── 新建：ChatConfigView.swift（右侧配置面板，替代 Inspector）
+│   ├── 新建：ThinkingBlockView.swift（内联思考块，可折叠）
+│   ├── 新建：ModuleListView.swift（模块列表 + toggle）
+│   ├── 改造：ChatView.swift（思考内容内联渲染）
+│   └── 改造：SettingsView.swift（移除 Connectors，Settings 仅保留 Models + About）
+│
+├── 4. 新建 ModuleManager + KleeModule
+│
+├── 5. 更新 CLAUDE.md / README.md
+└── App 体积从 ~180MB 降至 ~75MB
+
+Phase B: 依赖升级 + 诊断（1-2 天）
 ├── 升级 mlx-swift-lm 到包含 PR #129 的最新版本
 ├── 添加 tok/s 诊断日志（prefill vs decode 分别计时）
 ├── 确认 Gated DeltaNet Metal kernel 是否生效
 └── 对比升级前后的 tok/s 数据
 
-Phase B: 双模型通道（1 周）
+Phase C: 双模型通道（1 周）
 ├── LLMService 支持 LLM/VLM 双通道加载
 ├── RecommendedModels 增加纯文本变体
 ├── UI 上区分 "Text" / "Vision" 模式
@@ -816,13 +875,13 @@ Phase B: 双模型通道（1 周）
  P1  模块化开发 — 小红书模块验证方案
 ═══════════════════════════════════════════════════════════
 
-Phase C: 模块基础设施（1-2 周）
+Phase D: 模块基础设施（1-2 周）
 ├── ModuleManager 服务（模块注册、启用/禁用）
 ├── Skill Layer 注入机制（渐进式上下文）
 ├── Intent Router（LLM 意图 → Service 方法映射）
-└── Module 管理 UI（Settings 面板新增 Modules tab）
+└── Module 管理 UI（Settings 面板新增 Modules tab，替代原 Connectors）
 
-Phase D: 小红书 Swift Service（2-3 周）
+Phase E: 小红书 Swift Service（2-3 周）
 ├── 移植 xhshow 签名算法到 Swift（核心工作量）
 ├── 移植 Creator 签名 (MD5 + AES-128-CBC)
 ├── 实现 XHSService (URLSession + API 封装)
@@ -835,7 +894,7 @@ Phase D: 小红书 Swift Service（2-3 周）
  P2  高级性能优化 + 分发
 ═══════════════════════════════════════════════════════════
 
-Phase E: VLM Adapter + SSD KV 缓存（4-6 周）
+Phase F: VLM Adapter + SSD KV 缓存（4-6 周）
 ├── Fork mlx-swift-lm，视觉编码器改为 lazy init
 ├── 实现 VLMAdapter（统一接口，按需路由）
 ├── 实现 KVCacheBlock + 链式哈希前缀匹配
@@ -843,24 +902,24 @@ Phase E: VLM Adapter + SSD KV 缓存（4-6 周）
 ├── 集成到 LLMService generate 管线
 └── Agent 工具调用场景端到端测试
 
-Phase F: 分发准备（1-2 周）
-├── 集成 Sparkle 2.x 自动更新
-├── Developer ID 签名 + Notarization
+Phase G: 分发准备（1-2 周）
+├── Developer ID 签名 + Notarization（签名极简，一行命令）
 ├── DMG 打包脚本
+├── 集成 Sparkle 2.x 自动更新
 ├── GitHub Actions CI/CD（tag → build → sign → upload）
-└── appcast.xml 自动生成
+└── 评估 App Store 分发可行性（App Sandbox 兼容性测试）
 
 ═══════════════════════════════════════════════════════════
  P3  生态扩展 + 深度整合
 ═══════════════════════════════════════════════════════════
 
-Phase G: 模块生态扩展（持续）
+Phase H: 模块生态扩展（持续）
 ├── 总结 Swift Service 开发模式
 ├── 发布模块开发 SDK / 模板
 ├── 接入更多平台模块（B站、微博、抖音等）
 └── 模块市场 / 注册表（远期）
 
-Phase H: macOS 深度整合
+Phase I: macOS 深度整合
 ├── Spotlight 集成（对话标题可搜索）
 ├── Share Extension（接收文本/图片直接进入对话）
 ├── 全局快捷键唤起（类 Raycast）
@@ -868,7 +927,7 @@ Phase H: macOS 深度整合
 ├── Apple Foundation Models 集成（macOS 26+）
 └── SwiftData 迁移 + 跨设备同步
 
-Phase I: 贡献上游（持续）
+Phase J: 贡献上游（持续）
 ├── VLM adapter / lazy vision loader 提交给 mlx-swift-lm
 ├── KV cache 方案提交给 mlx-swift-examples
 └── 推动 evalLock 优化
@@ -885,15 +944,21 @@ mlx_lm.convert --hf-path Qwen/Qwen3-8B --mlx-path ./Qwen3-8B-4bit --quantize --q
 
 ## 附录 B：参考项目
 
+**本地源码**（已 clone 到 `../6-1-Klee Reference/`，可直接阅读）：
+
+| 本地路径 | 项目 | 说明 |
+|---------|------|------|
+| `../6-1-Klee Reference/omlx/` | [jundot/omlx](https://github.com/jundot/omlx) | MLX 推理优化：SSD KV 缓存、Qwen3.5 GatedDeltaNet 修复、VLMModelAdapter |
+| `../6-1-Klee Reference/xhs-cli/` | [jackwener/xiaohongshu-cli](https://github.com/jackwener/xiaohongshu-cli) | 小红书 API 逆向：签名算法（xhshow）、HTTP 客户端、Cookie 管理、QR 登录 |
+
+**在线参考**：
+
 | 项目 | 说明 |
 |------|------|
 | [ml-explore/mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples) | Apple 官方示例 |
 | [ml-explore/mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | MLX Swift 推理库 |
-| [jundot/omlx](https://github.com/jundot/omlx) | MLX 推理优化（SSD KV 缓存、Qwen3.5 修复） |
 | [Trans-N-ai/swama](https://github.com/Trans-N-ai/swama) | 纯 Swift MLX 推理引擎 |
-| [jackwener/xiaohongshu-cli](https://github.com/jackwener/xiaohongshu-cli) | 小红书 CLI（Apache 2.0） |
-| [Cloxl/xhshow](https://github.com/Cloxl/xhshow) | 小红书签名库（MIT） |
-| [modelcontextprotocol/swift-sdk](https://github.com/modelcontextprotocol/swift-sdk) | MCP Swift SDK |
+| [Cloxl/xhshow](https://github.com/Cloxl/xhshow) | 小红书签名核心库（MIT） |
 
 ## 附录 C：调研来源
 
@@ -908,7 +973,7 @@ mlx_lm.convert --hf-path Qwen/Qwen3-8B --mlx-path ./Qwen3-8B-4bit --quantize --q
 ## 附录 D：开放讨论点
 
 1. **签名算法维护机制**：如何建立 xhshow 上游变更的快速同步流程？
-2. **MCP 和原生 Service 的边界**：建议有状态/长连接 → MCP，无状态 API → Swift Service
-3. **逆向 API 的法律合规性**：需法务评估小红书 ToS 对自动化访问的限制
-4. **模块混合模式**：同时支持 Swift 原生模块（核心平台）和外部 CLI 模块（长尾平台）？
-5. **是否需要模块签名/审核机制**防止恶意第三方模块？
+2. **逆向 API 的法律合规性**：需法务评估小红书 ToS 对自动化访问的限制
+3. **App Store 分发可行性**：移除 Node.js 后 Sandbox 兼容性需实测验证
+4. **是否需要模块签名/审核机制**防止恶意第三方模块？（远期）
+5. ~~**MCP 和原生 Service 的边界**~~：已决定全部使用 Swift 原生 Service，移除 MCP
