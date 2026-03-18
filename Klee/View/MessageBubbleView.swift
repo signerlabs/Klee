@@ -50,7 +50,7 @@ struct MessageBubbleView: View {
         }
     }
 
-    // MARK: - Assistant Bubble (clean text only; thinking/tool details are in Inspector)
+    // MARK: - Assistant Bubble (clean text only; thinking is shown inline via ThinkingBlockView)
 
     @ViewBuilder
     private func assistantBubbleContent(_ content: String) -> some View {
@@ -98,7 +98,7 @@ struct ThinkingBubbleView: View {
         HStack {
             HStack(spacing: 6) {
                 ThinkingIndicator()
-                Text("Implementing...")
+                Text("Thinking...")
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14)

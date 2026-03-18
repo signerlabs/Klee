@@ -17,15 +17,6 @@ import UniformTypeIdentifiers
 @MainActor
 class ChatViewModel {
 
-    // MARK: - Tool Call State
-
-    /// Represents the current state of an MCP tool call during agent execution
-    enum ToolCallState: Equatable {
-        case calling(toolName: String)
-        case completed(toolName: String, result: String)
-        case failed(toolName: String, error: String)
-    }
-
     // MARK: - Observable State
 
     var inputText: String = ""
@@ -34,10 +25,7 @@ class ChatViewModel {
     /// Pending image attachments (file URLs) for the next message
     var pendingImageURLs: [URL] = []
 
-    /// Current active tool call (nil when no tool is being invoked)
-    var currentToolCall: ToolCallState?
-
-    /// All thinking and tool call events for the current conversation, shown in Inspector
+    /// All thinking events for the current conversation, shown in Inspector
     var inspectorItems: [InspectorItem] = []
 
     // MARK: - Private Streaming State
@@ -52,19 +40,14 @@ class ChatViewModel {
 
     private let llmService: LLMService
     private let chatStore: ChatStore
-    private let mcpClientManager: MCPClientManager
-
-    // MARK: - Constants
-
-    /// Maximum number of tool-call round-trips before forcing completion
-    private let maxToolCallRounds = 10
+    private let moduleManager: ModuleManager
 
     // MARK: - Init
 
-    init(llmService: LLMService, chatStore: ChatStore, mcpClientManager: MCPClientManager) {
+    init(llmService: LLMService, chatStore: ChatStore, moduleManager: ModuleManager) {
         self.llmService = llmService
         self.chatStore = chatStore
-        self.mcpClientManager = mcpClientManager
+        self.moduleManager = moduleManager
     }
 
     // MARK: - Computed Helpers
@@ -90,6 +73,16 @@ class ChatViewModel {
 
     var conversationId: UUID? {
         chatStore.selectedConversationId
+    }
+
+    /// Current thinking content for inline display (most recent thinking block)
+    var currentThinkingContent: String? {
+        for item in inspectorItems.reversed() {
+            if case .thinking(let content) = item.content {
+                return content
+            }
+        }
+        return nil
     }
 
     // MARK: - Send Message
@@ -120,127 +113,41 @@ class ChatViewModel {
         isStreaming = true
 
         Task {
-            let hasMCPTools = mcpClientManager.hasTools
-            let toolSpecs = hasMCPTools ? mcpClientManager.toolSpecs : nil
-            print("[ChatVM] 🚀 Start | hasMCPTools=\(hasMCPTools) | toolCount=\(mcpClientManager.allTools.count) | nativeTools=\(toolSpecs?.count ?? 0)")
-
-            // Build the initial message history
-            var history = buildHistory(hasMCPTools: hasMCPTools)
+            // Build message history with system prompt
+            let history = buildHistory()
 
             // Convert image URLs to UserInput.Image for VLM inference
             let vlmImages: [UserInput.Image] = imageURLs.map { .url($0) }
 
-            // Accumulates the final displayed text across all rounds
-            var displayText = ""
-            var toolCallRound = 0
+            // Single-round LLM streaming inference (no tool calling)
+            let stream = llmService.chat(messages: history, images: vlmImages)
 
-            // Main inference loop: stream -> check for tool_call -> re-run if needed
-            while toolCallRound < maxToolCallRounds {
-                print("[ChatVM] 🔄 Round \(toolCallRound) | Starting LLM inference...")
-                // Only pass images on the first round (they belong to the original user message)
-                let roundImages = toolCallRound == 0 ? vlmImages : []
-                let stream = llmService.chat(messages: history, tools: toolSpecs, images: roundImages)
+            var accumulated = ""
+            streamingThinkingIndex = nil
+            thinkBlockFinalized = false
 
-                var accumulated = ""
-                var detectedToolCall: ToolCall?
-                var tokenCount = 0
-                streamingThinkingIndex = nil
-                thinkBlockFinalized = false
-
-                for await chunk in stream {
-                    switch chunk {
-                    case .text(let token):
-                        accumulated += token
-                        tokenCount += 1
-                        // Update Inspector with real-time thinking
-                        updateInspectorStreaming(accumulated: accumulated)
-                        // Skip UI updates during thinking phase — content hasn't changed and
-                        // updating every thinking token causes unnecessary SwiftUI re-renders.
-                        if streamingThinkingIndex == nil {
-                            let cleanedSoFar = removeThinkBlock(from: displayText + accumulated)
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                            chatStore.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
-                        }
-                    case .toolCall(let tc):
-                        detectedToolCall = tc
-                        print("[ChatVM] 🔧 Native tool call detected: \(tc.function.name)")
+            for await chunk in stream {
+                if case .text(let token) = chunk {
+                    accumulated += token
+                    // Update Inspector with real-time thinking
+                    updateInspectorStreaming(accumulated: accumulated)
+                    // Skip UI updates during thinking phase — content hasn't changed and
+                    // updating every thinking token causes unnecessary SwiftUI re-renders.
+                    if streamingThinkingIndex == nil {
+                        let cleanedSoFar = removeThinkBlock(from: accumulated)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        chatStore.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
                     }
                 }
-
-                // Finalize any open thinking block
-                streamingThinkingIndex = nil
-
-                print("[ChatVM] ✅ Streaming done | tokens=\(tokenCount) | length=\(accumulated.count)")
-                print("[ChatVM] 🔍 nativeToolCall=\(detectedToolCall != nil) | Contains <think>: \(accumulated.contains("<think>"))")
-
-                // Handle native tool call
-                if let toolCall = detectedToolCall {
-                    toolCallRound += 1
-                    let toolName = toolCall.function.name
-                    print("[ChatVM] 🔧 Executing tool '\(toolName)' | round=\(toolCallRound)")
-
-                    // Record tool call in Inspector as "calling"
-                    let argsString = formatToolArguments(toolCall.function.arguments)
-                    let inspectorIndex = inspectorItems.count
-                    inspectorItems.append(InspectorItem(
-                        timestamp: Date(),
-                        content: .toolCall(name: toolName, arguments: argsString, status: .calling)
-                    ))
-
-                    currentToolCall = .calling(toolName: toolName)
-                    let toolResult = await executeNativeToolCall(toolCall)
-
-                    // Clean display: strip <think> blocks and tool call markers from accumulated text
-                    let cleaned = removeThinkBlock(from: accumulated)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    displayText += cleaned.isEmpty ? "" : cleaned + "\n\n"
-                    chatStore.updateMessage(id: assistantID, in: convId, content: displayText)
-
-                    // Build continuation messages for next round (strip think blocks to prevent repetition)
-                    let cleanedForHistory = removeThinkBlock(from: accumulated)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    history.append(ChatMessage(role: .assistant, content: cleanedForHistory))
-
-                    if let result = toolResult.result {
-                        currentToolCall = .completed(toolName: toolName, result: String(result.prefix(200)))
-                        // Update Inspector item status to completed
-                        if inspectorIndex < inspectorItems.count {
-                            inspectorItems[inspectorIndex].content = .toolCall(
-                                name: toolName, arguments: argsString, status: .completed(result: String(result.prefix(500)))
-                            )
-                        }
-                        print("[ChatVM] ✅ Tool success, result length=\(result.count)")
-                        // Qwen3.5 template expects tool results wrapped in <tool_response> as a user message.
-                        // Using system role mid-conversation triggers JinjaTemplateException.
-                        history.append(ChatMessage(role: .user, content: "<tool_response>\n\(result)\n</tool_response>"))
-                    } else {
-                        let errMsg = toolResult.error ?? "Unknown error"
-                        currentToolCall = .failed(toolName: toolName, error: errMsg)
-                        // Update Inspector item status to failed
-                        if inspectorIndex < inspectorItems.count {
-                            inspectorItems[inspectorIndex].content = .toolCall(
-                                name: toolName, arguments: argsString, status: .failed(error: errMsg)
-                            )
-                        }
-                        print("[ChatVM] ❌ Tool failed: \(errMsg)")
-                        history.append(ChatMessage(role: .user, content: "<tool_response>\nError: \(errMsg)\n</tool_response>"))
-                    }
-
-                    print("[ChatVM] 🔄 Continuing to next round...")
-                    continue
-                }
-
-                // No tool call — final answer (thinking already captured above)
-                print("[ChatVM] 💬 No tool call detected, finalizing response")
-                displayText += accumulated
-                break
             }
 
-            // Finalize: strip <think> blocks for clean display
-            let finalContent = removeThinkBlock(from: displayText)
+            // Finalize any open thinking block
+            streamingThinkingIndex = nil
+
+            // Strip <think> blocks for clean display
+            let finalContent = removeThinkBlock(from: accumulated)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             chatStore.updateMessage(id: assistantID, in: convId, content: finalContent)
-            print("[ChatVM] 🏁 Done | final length=\(finalContent.count)")
 
             // Remove placeholder if empty (generation failed)
             if finalContent.isEmpty {
@@ -254,15 +161,14 @@ class ChatViewModel {
             // Persist inspector items alongside the conversation
             chatStore.updateInspectorItems(inspectorItems, for: convId)
             chatStore.saveConversation(id: convId)
-            currentToolCall = nil
 
-            // Generate title before releasing isStreaming so the LLM is not
-            // claimed by a new user message while title generation is running.
-            if isFirstMessage {
-                let titleBasis = text.isEmpty ? "Image conversation" : text
-                await generateTitle(for: convId, basedOn: titleBasis)
-            }
             isStreaming = false
+
+            // Use user's first message as conversation title (truncated to 30 chars)
+            if isFirstMessage {
+                let title = text.isEmpty ? "Image conversation" : String(text.prefix(30))
+                chatStore.updateTitle(title, for: convId)
+            }
         }
     }
 
@@ -289,38 +195,28 @@ class ChatViewModel {
 
     // MARK: - Build History
 
-    /// Build the chat history array for the LLM, optionally prepending tool behavior instructions.
-    private func buildHistory(hasMCPTools: Bool) -> [ChatMessage] {
+    /// Build the chat history array for the LLM, prepending system prompt with module skills.
+    private func buildHistory() -> [ChatMessage] {
         var history = messages
             .filter { $0.role != .system }
             .dropLast() // Exclude the empty assistant placeholder
             .map { $0 }
 
-        // Prepend behavioral system prompt if tools are available
-        // (tool definitions are passed via native UserInput.tools, not in the prompt)
-        if hasMCPTools {
-            let behaviorPrompt = mcpClientManager.toolBehaviorPrompt
-            if !behaviorPrompt.isEmpty {
-                history.insert(ChatMessage(role: .system, content: behaviorPrompt), at: 0)
-            }
+        // Build system prompt: built-in capabilities + active module skills
+        var systemParts: [String] = [
+            "You are Klee, a local AI assistant running on macOS.",
+            "You can read and write local files (Desktop, Documents, Downloads, etc.) and fetch web page content."
+        ]
+
+        let moduleSkills = moduleManager.combinedSkillPrompt
+        if !moduleSkills.isEmpty {
+            systemParts.append(moduleSkills)
         }
+
+        let systemPrompt = systemParts.joined(separator: "\n")
+        history.insert(ChatMessage(role: .system, content: systemPrompt), at: 0)
 
         return Array(history)
-    }
-
-    // MARK: - Tool Call Execution
-
-    /// Execute a native MLX ToolCall via MCPClientManager
-    private func executeNativeToolCall(_ toolCall: ToolCall) async -> (result: String?, error: String?) {
-        do {
-            let result = try await mcpClientManager.callToolFromNative(
-                name: toolCall.function.name,
-                arguments: toolCall.function.arguments
-            )
-            return (result, nil)
-        } catch {
-            return (nil, error.localizedDescription)
-        }
     }
 
     // MARK: - Text Cleanup
@@ -350,7 +246,6 @@ class ChatViewModel {
     func stopGeneration() {
         llmService.stopGeneration()
         isStreaming = false
-        currentToolCall = nil
 
         // Persist inspector items so they survive conversation switches
         if let convId = conversationId {
@@ -365,7 +260,6 @@ class ChatViewModel {
         isStreaming = false
         inputText = ""
         pendingImageURLs = []
-        currentToolCall = nil
         streamingThinkingIndex = nil
         thinkBlockFinalized = false
 
@@ -433,70 +327,4 @@ class ChatViewModel {
         }
     }
 
-    /// Format tool call arguments dictionary into a readable string
-    private func formatToolArguments(_ arguments: [String: MLXLMCommon.JSONValue]) -> String {
-        // Convert JSONValue to native types for JSONSerialization
-        let native = arguments.mapValues { jsonValueToNative($0) }
-        guard let data = try? JSONSerialization.data(withJSONObject: native, options: [.prettyPrinted, .sortedKeys]),
-              let str = String(data: data, encoding: .utf8) else {
-            return String(describing: arguments)
-        }
-        return str
-    }
-
-    /// Convert MLXLMCommon.JSONValue to Foundation-compatible type for serialization
-    private func jsonValueToNative(_ val: MLXLMCommon.JSONValue) -> Any {
-        switch val {
-        case .null: return NSNull()
-        case .bool(let b): return b
-        case .int(let i): return i
-        case .double(let d): return d
-        case .string(let s): return s
-        case .array(let arr): return arr.map { jsonValueToNative($0) }
-        case .object(let obj): return obj.mapValues { jsonValueToNative($0) }
-        }
-    }
-
-    // MARK: - AI Title Generation
-
-    private func generateTitle(for conversationId: UUID, basedOn userMessage: String) async {
-        // Only generate if title is still default
-        guard let conv = chatStore.conversations.first(where: { $0.id == conversationId }),
-              conv.hasDefaultTitle else { return }
-
-        guard llmService.state.isReady else {
-            chatStore.updateTitle(String(userMessage.prefix(20)), for: conversationId)
-            return
-        }
-
-        let prompt = "Generate a very short title (max 5 words) for this chat message. Use the SAME language as the message. Reply with ONLY the title, nothing else. No thinking, no quotes, no explanation.\n\nMessage: \(userMessage)"
-        let stream = llmService.chat(messages: [ChatMessage(role: .user, content: prompt)])
-
-        var raw = ""
-        for await chunk in stream {
-            if case .text(let token) = chunk {
-                raw += token
-            }
-        }
-
-        // Strip <think>...</think> blocks
-        var title = removeThinkBlock(from: raw)
-
-        // Clean up
-        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if (title.hasPrefix("\"") && title.hasSuffix("\"")) ||
-           (title.hasPrefix("'") && title.hasSuffix("'")) {
-            title = String(title.dropFirst().dropLast())
-        }
-        if let firstLine = title.components(separatedBy: .newlines).first(where: { !$0.isEmpty }) {
-            title = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if title.isEmpty {
-            title = String(userMessage.prefix(20))
-        } else if title.count > 40 {
-            title = String(title.prefix(40))
-        }
-
-        chatStore.updateTitle(title, for: conversationId)
-    }
 }

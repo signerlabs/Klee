@@ -143,12 +143,6 @@ struct HomeView: View {
             // Settings menu at bottom
             Menu {
                 Button {
-                    activeSettingsPanel = .connectors
-                } label: {
-                    Label("Connectors", systemImage: "puzzlepiece.extension")
-                }
-
-                Button {
                     activeSettingsPanel = .models
                 } label: {
                     Label("Models", systemImage: "cpu")
@@ -207,4 +201,5 @@ struct HomeView: View {
         .environment(ModelManager())
         .environment(DownloadManager())
         .environment(ChatStore())
+        .environment(ModuleManager())
 }

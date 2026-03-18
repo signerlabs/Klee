@@ -14,7 +14,7 @@ extension ModelInfo {
     /// expectedBytes is an estimated download size for progress bar calculation (does not need to be exact)
     static let recommended: [ModelInfo] = [
 
-        // 16GB devices (minimum for MCP tool calling)
+        // 16GB devices
         ModelInfo(
             id: "mlx-community/Qwen3.5-9B-4bit",
             name: "Qwen 3.5 9B",

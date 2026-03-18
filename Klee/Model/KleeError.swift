@@ -3,7 +3,7 @@
 //  Klee
 //
 //  Unified error types for the Klee application.
-//  Consolidates model, download, and MCP errors into a single enum.
+//  Consolidates model and download errors into a single enum.
 //
 
 import Foundation
@@ -23,12 +23,6 @@ enum KleeError: LocalizedError {
 
     case downloadFailed(String)
 
-    // MARK: MCP Errors
-
-    case toolNotFound(String)
-    case serverNotConnected(String)
-    case toolExecutionFailed(String, String)
-
     var errorDescription: String? {
         switch self {
         case .modelLoadFailed(let detail):
@@ -41,12 +35,6 @@ enum KleeError: LocalizedError {
             return "Insufficient memory: this model requires \(required)GB, but only \(available)GB available."
         case .downloadFailed(let detail):
             return "Model download failed: \(detail)"
-        case .toolNotFound(let name):
-            return "Tool '\(name)' not found in any connected MCP server."
-        case .serverNotConnected(let name):
-            return "MCP server '\(name)' is not connected."
-        case .toolExecutionFailed(let name, let detail):
-            return "Tool '\(name)' execution failed: \(detail)"
         }
     }
 }

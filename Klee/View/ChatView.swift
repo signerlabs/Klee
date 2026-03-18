@@ -14,10 +14,10 @@ struct ChatView: View {
     @Environment(LLMService.self) var llmService
     @Environment(ModelManager.self) var modelManager
     @Environment(ChatStore.self) var chatStore
-    @Environment(MCPClientManager.self) var mcpClientManager
+    @Environment(ModuleManager.self) var moduleManager
     @Environment(\.openSettings) private var openSettings
     @State private var viewModel: ChatViewModel?
-    @State private var showInspector = false
+    @State private var showConfig = false
 
     /// Throttle state for scroll-to-bottom
     @State private var lastScrollTime: Date = .distantPast
@@ -57,7 +57,7 @@ struct ChatView: View {
                 viewModel = ChatViewModel(
                     llmService: llmService,
                     chatStore: chatStore,
-                    mcpClientManager: mcpClientManager
+                    moduleManager: moduleManager
                 )
             }
         }
@@ -65,9 +65,6 @@ struct ChatView: View {
             trailingScrollTask?.cancel()
             trailingScrollTask = nil
             viewModel?.resetForNewConversation()
-        }
-        .onChange(of: showWelcome) { _, isWelcome in
-            showInspector = !isWelcome
         }
     }
 
@@ -95,20 +92,20 @@ struct ChatView: View {
             }
         }
         .frame(minWidth: 400, minHeight: 300)
-        .inspector(isPresented: $showInspector) {
-            InspectorView(items: viewModel.inspectorItems)
-                .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
+        .inspector(isPresented: $showConfig) {
+            ChatConfigView()
+                .inspectorColumnWidth(min: 220, ideal: 260, max: 320)
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
                     withAnimation {
-                        showInspector.toggle()
+                        showConfig.toggle()
                     }
                 } label: {
-                    Image(systemName: "sidebar.right")
+                    Image(systemName: "slider.horizontal.3")
                 }
-                .help("Toggle Inspector")
+                .help("Toggle Config")
             }
         }
     }
@@ -129,15 +126,26 @@ struct ChatView: View {
                         }
                     }
 
+                    // Thinking block: show inline during streaming
                     if viewModel.isStreaming,
                        let last = viewModel.messages.last,
                        last.role == .assistant,
                        last.content.isEmpty {
-                        ThinkingBubbleView()
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                            .id("chat-thinking")
+                        if let thinking = viewModel.currentThinkingContent {
+                            // Thinking content available: show collapsible block
+                            ThinkingBlockView(content: thinking, isStreaming: true)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                .id("chat-thinking")
+                        } else {
+                            // No thinking content yet: show original bouncing dots
+                            ThinkingBubbleView()
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                .id("chat-thinking")
+                        }
                     }
 
                     // Invisible bottom anchor

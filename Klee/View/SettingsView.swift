@@ -2,7 +2,7 @@
 //  SettingsView.swift
 //  Klee
 //
-//  Settings sheet with three panels: Connectors, Models, About.
+//  Settings sheet with two panels: Models, About.
 //
 
 import SwiftUI
@@ -11,7 +11,6 @@ import SwiftUI
 
 /// Identifies which settings panel to display.
 enum SettingsPanel: String, Identifiable, CaseIterable {
-    case connectors
     case models
     case about
 
@@ -19,7 +18,6 @@ enum SettingsPanel: String, Identifiable, CaseIterable {
 
     var title: String {
         switch self {
-        case .connectors: "Connectors"
         case .models: "Models"
         case .about: "About"
         }
@@ -27,7 +25,6 @@ enum SettingsPanel: String, Identifiable, CaseIterable {
 
     var icon: String {
         switch self {
-        case .connectors: "puzzlepiece.extension"
         case .models: "cpu"
         case .about: "info.circle"
         }
@@ -44,8 +41,6 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 switch initialPanel {
-                case .connectors:
-                    connectorsContent
                 case .models:
                     modelsContent
                 case .about:
@@ -63,13 +58,6 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 540, idealWidth: 600, minHeight: 500, idealHeight: 600)
-    }
-
-    // MARK: - Connectors Panel
-
-    @ViewBuilder
-    private var connectorsContent: some View {
-        MCPServerListView()
     }
 
     // MARK: - Models Panel
@@ -184,7 +172,7 @@ struct SettingsView: View {
 
     private var shipSwiftApps: [ShipSwiftApp] {
         [
-            ShipSwiftApp(name: "ShipSwift", assetName: "ShipSwift Logo", tagline: "MCP Codebase",  customURL: "https://shipswift.app"),
+            ShipSwiftApp(name: "ShipSwift", assetName: "ShipSwift Logo", tagline: "iOS Starter Kit", customURL: "https://shipswift.app"),
             ShipSwiftApp(name: "SmileMax",  assetName: "SmileMax Logo",  tagline: "Glow Up Coach",                    appId: "6758947123"),
             ShipSwiftApp(name: "Fullpack",  assetName: "Fullpack Logo",  tagline: "Packing & Outfit",                 appId: "6745692929"),
             ShipSwiftApp(name: "Brushmo",   assetName: "Brushmo Logo",   tagline: "Oral Health Companion",            appId: "6744569822"),
@@ -212,12 +200,6 @@ private struct ShipSwiftApp: Identifiable {
 }
 
 // MARK: - Preview
-
-#Preview("Connectors") {
-    SettingsView(initialPanel: .connectors)
-        .environment(MCPServerStore())
-        .environment(MCPServerManager())
-}
 
 #Preview("Models") {
     SettingsView(initialPanel: .models)

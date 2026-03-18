@@ -10,7 +10,8 @@ import Foundation
 
 // MARK: - HuggingFaceAPI
 
-struct HuggingFaceAPI {
+/// Not MainActor-isolated — called from FileDownloader's background URLSession delegate context.
+nonisolated struct HuggingFaceAPI {
 
     // MARK: - File Filtering Constants
 
@@ -58,10 +59,11 @@ struct HuggingFaceAPI {
 
     // MARK: - Resolved Endpoint
 
-    /// Resolved HuggingFace endpoint (mirror or official)
-    static func resolvedEndpoint() -> String {
-        if let mirror = LLMService.huggingFaceMirror {
-            return mirror
+    /// Resolved HuggingFace endpoint (mirror or official).
+    /// Reads HF_ENDPOINT env var directly to avoid MainActor dependency.
+    nonisolated static func resolvedEndpoint() -> String {
+        if let endpoint = ProcessInfo.processInfo.environment["HF_ENDPOINT"], !endpoint.isEmpty {
+            return endpoint
         }
         return "https://huggingface.co"
     }

@@ -11,8 +11,8 @@ Klee uses [MLX](https://github.com/ml-explore/mlx-swift) to run large language m
 - **One-click model download** -- pick a model, Klee handles the rest
 - **Vision support** -- attach images to your messages with supported VLM models
 - **Streaming responses** -- tokens appear as they're generated
-- **Connectors (MCP)** -- extend the AI with external tools (web browsing, file access, databases, and more)
-- **Inspector panel** -- see the AI's thinking process and tool usage in real-time
+- **Inline thinking** -- see the model's reasoning process as it generates
+- **Platform modules** -- extend the AI with native Swift integrations (coming soon)
 - **Lightweight** -- native SwiftUI app, no Electron, no Docker, no background services
 
 ## System Requirements
@@ -73,25 +73,7 @@ cd Klee
 open Klee.xcodeproj
 ```
 
-Select the **Klee** scheme, then build and run (Cmd+R). SPM dependencies (mlx-swift-lm, swift-sdk) will resolve automatically on first build.
-
-## Connectors
-
-Connectors let Klee talk to external tools and services via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Each connector is a small plugin that gives the AI new abilities beyond just chatting.
-
-Klee comes with two built-in connectors:
-
-- **Web Browser** -- browse and interact with web pages (powered by Playwright)
-- **Filesystem** -- read, write, and search files on your Mac
-
-To add a custom connector:
-
-1. Open **Settings > Connectors** from the sidebar
-2. Click **Add Server**
-3. Enter the npx command for the MCP server (e.g., `@anthropic-ai/mcp-server-filesystem`)
-4. Enable the connector -- Klee will start it automatically
-
-Klee bundles Node.js so you don't need to install anything separately.
+Select the **Klee** scheme, then build and run (Cmd+R). SPM dependencies (mlx-swift-lm) will resolve automatically on first build.
 
 ## Acknowledgements
 
