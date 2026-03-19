@@ -111,6 +111,10 @@ class ChatViewModel {
         let assistantID = assistantMsg.id
 
         isStreaming = true
+        // Clear previous thinking state so new generation starts fresh
+        inspectorItems = []
+        streamingThinkingIndex = nil
+        thinkBlockFinalized = false
 
         Task {
             // Build message history with system prompt
@@ -123,8 +127,6 @@ class ChatViewModel {
             let stream = llmService.chat(messages: history, images: vlmImages)
 
             var accumulated = ""
-            streamingThinkingIndex = nil
-            thinkBlockFinalized = false
 
             for await chunk in stream {
                 if case .text(let token) = chunk {

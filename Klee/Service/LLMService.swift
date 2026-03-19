@@ -6,8 +6,16 @@
 //  Handles model loading (from downloaded local files) and streaming generation.
 //  Download logic has been separated into DownloadManager.
 //
+//  Phase C optimizations applied based on oMLX engine_core.py analysis:
+//  - Metal pipeline warmup after model load
+//  - Tuned GenerateParameters (temperature, prefillStepSize)
+//  - KV cache quantization support (kvBits param, disabled by default)
+//  - Accurate metrics from mlx-swift-lm's built-in GenerateCompletionInfo
+//  - GPU memory limit configuration via MLX Memory API
+//
 
 import Foundation
+import MLX
 import Observation
 import MLXLLM
 import MLXVLM
@@ -58,6 +66,10 @@ class LLMService {
     /// Current generation task (for cancellation)
     private var generationTask: Task<Void, Never>?
 
+    /// Whether the Metal pipeline has been warmed up for the current model.
+    /// Reset when a new model is loaded.
+    private var isMetalWarmedUp = false
+
     /// HuggingFace mirror URL (for acceleration in China)
     /// When set, all model downloads use the mirror; set to nil to restore the official source
     static var huggingFaceMirror: String? {
@@ -67,6 +79,84 @@ class LLMService {
             } else {
                 unsetenv("HF_ENDPOINT")
             }
+        }
+    }
+
+    // MARK: - Generation Parameters
+
+    // Optimization: tuned parameters based on oMLX engine defaults and mlx-swift-lm analysis.
+    // - temperature 0.6: mlx-swift-lm default, uses CategoricalSampler (efficient)
+    // - topP 1.0 (default): avoids TopPSampler overhead (softmax+cumsum+sort per token).
+    //   CategoricalSampler is already selected by temperature > 0 alone.
+    // - prefillStepSize 512: matches oMLX scheduler default, processes prompt in chunks
+    // - repetitionPenalty nil: no LogitProcessor created → zero per-token processing overhead
+    // - kvBits nil: KV cache quantization disabled by default. Enable (e.g., 8) for
+    //   long-context scenarios to reduce memory bandwidth. Quality tradeoff is minimal
+    //   at 8-bit but measurable at 4-bit.
+
+    /// Build optimized GenerateParameters for inference.
+    /// - Parameter kvBits: Optional KV cache quantization bits (nil = no quantization, 4 or 8 typical)
+    private func makeGenerateParameters(kvBits: Int? = nil) -> GenerateParameters {
+        GenerateParameters(
+            kvBits: kvBits,
+            kvGroupSize: 64,
+            temperature: 0.6,
+            prefillStepSize: 512
+        )
+    }
+
+    // MARK: - GPU Memory Configuration
+
+    /// Configure the MLX memory cache limit based on available system resources.
+    /// Optimization: oMLX engine_core.py keeps Metal resources alive by managing memory carefully.
+    /// On Apple Silicon, the GPU shares unified memory with the system.
+    /// Setting an appropriate cache limit prevents excessive memory pressure and page faults
+    /// that can degrade decode throughput.
+    private func configureGPUMemoryLimit() {
+        // Set MLX memory cache limit to allow the framework to keep recently freed
+        // GPU buffers in cache for reuse, reducing allocation overhead during decode.
+        // On M4 Pro (24GB), 75% of recommendedMaxWorkingSet is a conservative choice
+        // that leaves headroom for the OS and other apps.
+        if let recommended = GPU.maxRecommendedWorkingSetBytes() {
+            // Use 75% of recommended as cache limit
+            let limit = Int(Double(recommended) * 0.75)
+            Memory.cacheLimit = limit
+            print("[LLMService] Memory cache limit set to \(limit / 1_048_576)MB (recommended working set: \(recommended / 1_048_576)MB)")
+        }
+    }
+
+    // MARK: - Metal Pipeline Warmup
+
+    /// Run a minimal generation pass to warm up Metal shader compilation and memory allocators.
+    /// Optimization: oMLX's engine_core.py keeps the BatchGenerator and Metal stream persistent
+    /// between requests, so shaders stay compiled. In Klee, each generation creates a fresh
+    /// TokenIterator. Running a 1-token warmup after model load ensures Metal pipelines are
+    /// compiled and cached before the user's first real query.
+    /// - Parameter container: The loaded model container
+    private func warmupMetalPipeline(_ container: ModelContainer) async {
+        guard !isMetalWarmedUp else { return }
+
+        do {
+            let warmupMessages: [Chat.Message] = [
+                .system("You are a helpful assistant."),
+                .user("Hi"),
+            ]
+            let warmupInput = UserInput(chat: warmupMessages)
+            let lmInput = try await container.prepare(input: warmupInput)
+
+            // Use a minimal generation: maxTokens = 2 forces a quick prefill + 2 decode steps.
+            // This triggers Metal shader compilation for the model's architecture.
+            let params = GenerateParameters(maxTokens: 2, temperature: 0.0, prefillStepSize: 512)
+            let stream = try await container.generate(input: lmInput, parameters: params)
+
+            // Drain the stream to ensure Metal kernels are fully compiled
+            for await _ in stream {}
+
+            isMetalWarmedUp = true
+            print("[LLMService] Metal pipeline warmup complete")
+        } catch {
+            // Warmup failure is non-fatal — first real generation will just be slightly slower
+            print("[LLMService] Metal warmup failed (non-fatal): \(error.localizedDescription)")
         }
     }
 
@@ -83,9 +173,16 @@ class LLMService {
         loadProgress = nil
         loadingStatus = nil
         error = nil
+        isMetalWarmedUp = false
 
         // Persist the last used model ID
         UserDefaults.standard.set(id, forKey: "lastUsedModelId")
+
+        // Configure GPU memory and warm up Metal pipeline in background
+        configureGPUMemoryLimit()
+        Task {
+            await warmupMetalPipeline(container)
+        }
     }
 
     // MARK: - Load Local Downloaded Model
@@ -134,9 +231,14 @@ class LLMService {
             state = .ready
             loadProgress = nil
             loadingStatus = nil
+            isMetalWarmedUp = false
 
             // Persist the last used model ID
             UserDefaults.standard.set(id, forKey: "lastUsedModelId")
+
+            // Optimization: configure GPU memory and warm up Metal pipeline
+            configureGPUMemoryLimit()
+            await warmupMetalPipeline(container)
 
         } catch {
             self.state = .error(error.localizedDescription)
@@ -195,56 +297,67 @@ class LLMService {
                     // Prepare input (UserInput -> LMInput)
                     let lmInput = try await container.prepare(input: userInput)
 
-                    // Generation parameters
-                    let parameters = GenerateParameters(temperature: 0.7)
+                    // Optimization: use tuned GenerateParameters instead of hardcoded values.
+                    // See makeGenerateParameters() for details on each parameter choice.
+                    let parameters = makeGenerateParameters()
 
-                    // Use the AsyncStream version of the generate API
+                    // Use the AsyncStream version of the generate API.
+                    // Note: mlx-swift-lm's generate() already emits a .info(GenerateCompletionInfo)
+                    // event at the end of the stream with accurate timing from the TokenIterator.
+                    // We use this for metrics instead of manual Date() timing which includes
+                    // async scheduling overhead.
                     let generateStream = try await container.generate(
                         input: lmInput,
                         parameters: parameters
                     )
 
+                    // Optimization: track metrics from mlx-swift-lm's built-in GenerateCompletionInfo
+                    // which measures timing inside the synchronous TokenIterator loop, giving more
+                    // accurate decode speed than external Date() measurements that include
+                    // AsyncStream/Task scheduling overhead.
                     var tokenCount = 0
-                    let startTime = Date()
-                    var firstTokenTime: Date?
+                    var completionInfo: GenerateCompletionInfo?
 
                     for await result in generateStream {
                         if Task.isCancelled { break }
 
                         if let text = result.chunk {
-                            // Record TTFT on the very first token
-                            if firstTokenTime == nil {
-                                firstTokenTime = Date()
-                            }
                             continuation.yield(.text(text))
                             tokenCount += 1
                         }
                         if let toolCall = result.toolCall {
                             continuation.yield(.toolCall(toolCall))
                         }
+                        // Capture the completion info emitted at the end of the stream.
+                        // mlx-swift-lm measures promptTime (prefill) and generateTime (decode)
+                        // internally with high precision.
+                        if let info = result.info {
+                            completionInfo = info
+                        }
                     }
 
-                    // Only record metrics for complete (non-cancelled) generations
+                    // Update metrics from mlx-swift-lm's internal measurements when available
                     if !Task.isCancelled {
-                        let totalTime = Date().timeIntervalSince(startTime)
-                        let prefillTime = firstTokenTime?.timeIntervalSince(startTime) ?? totalTime
-                        let decodeTime = totalTime - prefillTime
+                        if let info = completionInfo {
+                            // Use mlx-swift-lm's accurate internal timing.
+                            // promptTime includes both the model.prepare() windowed prefill
+                            // (promptPrefillTime) and the first token generation step.
+                            self.lastPrefillTimeMs = info.promptTime * 1000
+                            self.lastTotalTokens = info.generationTokenCount
+                            self.lastDecodeTokensPerSec = info.tokensPerSecond
+                            self.lastTotalTimeMs = (info.promptTime + info.generateTime) * 1000
 
-                        self.lastPrefillTimeMs = prefillTime * 1000
-                        self.lastTotalTimeMs = totalTime * 1000
-                        self.lastTotalTokens = tokenCount
+                            // Overall tok/s (kept for backward compatibility)
+                            let totalTime = info.promptTime + info.generateTime
+                            self.tokensPerSecond = totalTime > 0
+                                ? Double(info.generationTokenCount) / totalTime : 0
 
-                        if decodeTime > 0 && tokenCount > 1 {
-                            // Decode speed: exclude the first token (counted during prefill)
-                            self.lastDecodeTokensPerSec = Double(tokenCount - 1) / decodeTime
+                            print("[LLMService] TTFT: \(String(format: "%.0f", info.promptTime * 1000))ms | Decode: \(String(format: "%.1f", info.tokensPerSecond)) tok/s (\(info.generationTokenCount) tokens in \(String(format: "%.2f", info.generateTime))s) | Prompt: \(info.promptTokenCount) tokens at \(String(format: "%.0f", info.promptTokensPerSecond)) tok/s")
                         } else {
-                            self.lastDecodeTokensPerSec = 0
+                            // Fallback: no completion info (stream was cancelled or error)
+                            self.lastTotalTokens = tokenCount
+                            print("[LLMService] Generation ended without completion info (tokens: \(tokenCount))")
                         }
-
-                        // Overall tok/s (kept for backward compatibility)
-                        self.tokensPerSecond = tokenCount > 0 ? Double(tokenCount) / totalTime : 0
-
-                        print("[LLMService] TTFT: \(String(format: "%.0f", prefillTime * 1000))ms | Decode: \(String(format: "%.1f", self.lastDecodeTokensPerSec)) tok/s | Total: \(tokenCount) tokens in \(String(format: "%.1f", totalTime))s | Overall: \(String(format: "%.1f", self.tokensPerSecond)) tok/s")
                     }
 
                     self.state = .ready
@@ -280,5 +393,6 @@ class LLMService {
         modelContainer = nil
         currentModelId = nil
         state = .idle
+        isMetalWarmedUp = false
     }
 }

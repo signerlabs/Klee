@@ -15,22 +15,26 @@ struct MessageBubbleView: View {
     var body: some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 60)
-                VStack(alignment: .trailing, spacing: 6) {
-                    // Show attached images if any
-                    if !message.imageURLs.isEmpty {
+            VStack(alignment: .trailing) {
+                // Images displayed separately, no background, right-aligned
+                if !message.imageURLs.isEmpty {
+                    HStack {
+                        Spacer(minLength: 60)
                         messageImages(urls: message.imageURLs)
                     }
-                    if !message.content.isEmpty {
+                }
+                // Text in accent bubble
+                if !message.content.isEmpty {
+                    HStack {
+                        Spacer(minLength: 60)
                         Text(message.content)
                             .textSelection(.enabled)
+                            .padding(8)
+                            .foregroundStyle(.white)
+                            .background(.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
-                .padding(8)
-                .foregroundStyle(.white)
-                .background(.accent)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
         case .assistant:
@@ -63,28 +67,30 @@ struct MessageBubbleView: View {
 
     // MARK: - User Message Image Display
 
-    /// Display attached images in a user message bubble
+    /// Display attached images in a user message, right-aligned without background
     private func messageImages(urls: [String]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(urls, id: \.self) { urlString in
-                    if let url = URL(string: urlString) {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                            case .failure:
-                                Image(systemName: "photo")
-                                    .foregroundStyle(.white.opacity(0.6))
-                            default:
-                                ProgressView()
-                            }
+        HStack(spacing: 6) {
+            ForEach(urls, id: \.self) { urlString in
+                if let url = URL(string: urlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(.tertiary, lineWidth: 0.5)
+                                )
+                        case .failure:
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                        default:
+                            ProgressView()
                         }
-                        .frame(width: 120, height: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
+                    .frame(width: 160)
                 }
             }
         }

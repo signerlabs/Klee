@@ -64,8 +64,7 @@ struct WelcomeView<InputBar: View>: View {
 
             // Centered input bar
             inputBar()
-                .frame(maxWidth: 600)
-                .padding(.bottom, 40)
+                .frame(maxWidth: 800)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
