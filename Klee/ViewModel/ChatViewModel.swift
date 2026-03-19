@@ -85,6 +85,19 @@ class ChatViewModel {
         return nil
     }
 
+    // MARK: - Tool Specifications
+
+    /// Assemble active tool specs based on enabled modules.
+    /// Built-in tools (file, shell) are always included.
+    /// Module tools (web_search, etc.) only when the module is ready.
+    private var toolSpecs: [[String: any Sendable]] {
+        var specs = ToolDefinitions.builtIn
+        if moduleManager.modules.first(where: { $0.id == "web_search" })?.isReady == true {
+            specs += ToolDefinitions.webSearch
+        }
+        return specs
+    }
+
     // MARK: - Send Message
 
     func sendMessage() {
@@ -126,105 +139,116 @@ class ChatViewModel {
             // Accumulated display text for the assistant bubble (across all rounds)
             var displayText = ""
 
-            // Action loop: stream LLM output, detect <action> tags, execute, re-run.
-            // Capped at maxActionRounds to prevent infinite loops.
-            let maxActionRounds = 5
-            var actionRound = 0
+            // Tool calling loop: stream LLM output, detect native ToolCall, execute, re-run.
+            // Capped at maxToolRounds to prevent infinite loops.
+            let maxToolRounds = 5
+            var toolRound = 0
 
-            while actionRound < maxActionRounds {
+            while toolRound < maxToolRounds {
                 // Reset per-round thinking state
                 streamingThinkingIndex = nil
                 thinkBlockFinalized = false
 
-                print("[ChatVM] ===== Round \(actionRound) START (history: \(history.count)) =====")
-                let stream = llmService.chat(messages: history, images: roundImages)
+                print("[ChatVM] ===== Round \(toolRound) START (history: \(history.count)) =====")
+                let stream = llmService.chat(messages: history, tools: toolSpecs, images: roundImages)
                 var accumulated = ""
+                var detectedToolCall: ToolCall?
 
                 for await chunk in stream {
-                    if case .text(let token) = chunk {
+                    switch chunk {
+                    case .text(let token):
                         accumulated += token
                         // Update Inspector with real-time thinking
                         updateInspectorStreaming(accumulated: accumulated)
-                        // Only update thinking block during streaming.
-                        // Message content is set once at the end of the loop.
+                    case .toolCall(let tc):
+                        detectedToolCall = tc
+                        print("[ChatVM] Native tool call: \(tc.function.name)")
                     }
                 }
 
                 // Finalize any open thinking block for this round
                 streamingThinkingIndex = nil
 
-                // Clean up the accumulated text (remove think blocks)
+                // Clean up the accumulated text (remove think blocks for display)
                 let cleanedAccumulated = removeThinkBlock(from: accumulated)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
-                print("[ChatVM] Round \(actionRound) LLM done | length: \(accumulated.count) | hasAction: \(cleanedAccumulated.contains("<action>"))")
+                print("[ChatVM] Round \(toolRound) LLM done | length: \(accumulated.count) | hasToolCall: \(detectedToolCall != nil)")
 
-                // Check for <action> tag in the cleaned output
-                if let parsed = IntentRouter.parseAction(from: cleanedAccumulated) {
-                    actionRound += 1
-                    print("[ChatVM] ACTION DETECTED: \(parsed.action.type) | round \(actionRound)")
+                // Check for native tool call
+                if let toolCall = detectedToolCall {
+                    toolRound += 1
+                    print("[ChatVM] TOOL CALL: \(toolCall.function.name) | round \(toolRound)")
 
-                    // Append any text before the action tag to the display
-                    let preText = parsed.preText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !preText.isEmpty {
-                        displayText += preText + "\n\n"
+                    // Append any text before the tool call to the display
+                    if !cleanedAccumulated.isEmpty {
+                        displayText += cleanedAccumulated + "\n\n"
                     }
 
-                    // Record the action in Inspector for visibility
+                    // Convert MLXLMCommon.JSONValue arguments to [String: Any]
+                    let args = convertToolCallArguments(toolCall.function.arguments)
+
+                    // Build arguments summary for Inspector display
+                    let argsSummary = toolCallArgumentsSummary(name: toolCall.function.name, arguments: args)
+
+                    // Record the tool call in Inspector for visibility
                     inspectorItems.append(InspectorItem(
                         timestamp: Date(),
                         content: .toolCall(
-                            name: parsed.action.type,
-                            arguments: actionArgumentsSummary(parsed.action),
+                            name: toolCall.function.name,
+                            arguments: argsSummary,
                             status: .calling
                         )
                     ))
-                    let actionItemIndex = inspectorItems.count - 1
+                    let toolItemIndex = inspectorItems.count - 1
 
-                    // Execute the action
-                    let result = await IntentRouter.execute(parsed.action)
-                    print("[ChatVM] Action \(parsed.action.type) \(result.success ? "OK" : "FAIL"): \(result.output.prefix(120))")
+                    // Collect API keys from enabled modules
+                    var apiKeys: [String: String] = [:]
+                    for module in moduleManager.modules where module.isReady {
+                        if let key = module.apiKey { apiKeys[module.id] = key }
+                    }
+                    let result = await IntentRouter.execute(name: toolCall.function.name, arguments: args, apiKeys: apiKeys)
+                    print("[ChatVM] Tool \(toolCall.function.name) \(result.success ? "OK" : "FAIL"): \(result.output.prefix(120))")
 
                     // Update Inspector with result
-                    if actionItemIndex < inspectorItems.count {
+                    if toolItemIndex < inspectorItems.count {
                         if result.success {
-                            inspectorItems[actionItemIndex].content = .toolCall(
-                                name: parsed.action.type,
-                                arguments: actionArgumentsSummary(parsed.action),
+                            inspectorItems[toolItemIndex].content = .toolCall(
+                                name: toolCall.function.name,
+                                arguments: argsSummary,
                                 status: .completed(result: String(result.output.prefix(200)))
                             )
                         } else {
-                            inspectorItems[actionItemIndex].content = .toolCall(
-                                name: parsed.action.type,
-                                arguments: actionArgumentsSummary(parsed.action),
+                            inspectorItems[toolItemIndex].content = .toolCall(
+                                name: toolCall.function.name,
+                                arguments: argsSummary,
                                 status: .failed(error: result.output)
                             )
                         }
                     }
-                    // Inject action result into history for the next LLM round.
-                    // The full accumulated output (including the action tag) is the assistant's response,
-                    // and the action result is injected as a user message.
-                    history.append(ChatMessage(role: .assistant, content: accumulated))
-                    let actionResultMsg = "<action_result>\n\(result.output)\n</action_result>"
-                    history.append(ChatMessage(role: .user, content: actionResultMsg))
-                    print("[ChatVM] Injected action_result into history | history count now: \(history.count)")
+
+                    // Inject tool result into history for the next LLM round.
+                    // The full accumulated output is the assistant's response,
+                    // and the tool result is injected as a user message.
+                    let cleanedAssistant = removeThinkBlock(from: accumulated)
+                    history.append(ChatMessage(role: .assistant, content: cleanedAssistant))
+                    history.append(ChatMessage(role: .user, content: "<tool_response>\n\(result.output)\n</tool_response>"))
+                    print("[ChatVM] Injected tool_response into history | history count now: \(history.count)")
 
                     // No images on continuation rounds
                     roundImages = []
 
-                    // If we've hit the action round limit, stop looping.
-                    // Append a notice so the user knows why the AI stopped.
-                    if actionRound >= maxActionRounds {
-                        displayText += "\n\n*(Reached maximum action rounds — stopping.)*"
+                    // If we've hit the tool round limit, stop looping.
+                    if toolRound >= maxToolRounds {
+                        displayText += "\n\n*(Reached maximum tool rounds -- stopping.)*"
                         break
                     }
                     continue
                 }
 
-                // No action found — this is the final answer.
-                let finalRoundText = removeActionBlock(from: cleanedAccumulated)
-                displayText += finalRoundText
-                print("[ChatVM] ===== FINAL ANSWER | round \(actionRound) =====")
+                // No tool call found — this is the final answer.
+                displayText += cleanedAccumulated
+                print("[ChatVM] ===== FINAL ANSWER | round \(toolRound) =====")
                 break
             }
 
@@ -278,8 +302,9 @@ class ChatViewModel {
 
     // MARK: - Build History
 
-    /// Build the chat history array for the LLM, prepending system prompt with action instructions
-    /// and module skills.
+    /// Build the chat history array for the LLM, prepending a minimal system prompt.
+    /// Tool definitions are passed natively via toolSpecs (not in the prompt),
+    /// saving ~500 tokens compared to the text-based <action> approach.
     private func buildHistory() -> [ChatMessage] {
         var history = messages
             .filter { $0.role != .system }
@@ -288,36 +313,14 @@ class ChatViewModel {
 
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
 
-        // Build system prompt: action instructions + module skills
+        // Build system prompt: role description + capability notes.
+        // Tool definitions are NOT listed here — they're passed via native tool spec.
         var systemParts: [String] = [
-            """
-            You are Klee, a local AI assistant running on macOS.
-
-            You can perform actions on the user's computer by outputting action tags. When the user asks you to do something (create a file, read a file, fetch a webpage, etc.), output the action in the following format:
-
-            <action>
-            {"type": "action_type", ...parameters}
-            </action>
-
-            Available actions:
-            - file_write: Create or overwrite a file. Parameters: path (string), content (string)
-            - file_read: Read a file's contents. Parameters: path (string)
-            - file_list: List files in a directory. Parameters: path (string)
-            - file_delete: Delete a file. Parameters: path (string)
-            - web_fetch: Fetch a webpage's text content. Parameters: url (string)
-            - shell_exec: Execute a shell command. Parameters: command (string)
-
-            Path notes:
-            - Use absolute paths. ~ expands to the user's home directory.
-            - The user's home directory is: \(homeDir)
-
-            After outputting an action, wait for the result. The system will execute it and provide the output inside <action_result> tags. Then continue your response to the user based on the result.
-
-            Important rules:
-            - Only output ONE action at a time. Wait for the result before outputting the next action.
-            - Do not fabricate action results. Wait for the actual execution result.
-            - For simple questions that don't require system interaction, just respond normally without any action tags.
-            """
+            "You are Klee, a local AI assistant running on macOS.",
+            "You have access to tools for file operations, web browsing, and shell commands.",
+            "The user's home directory is: \(homeDir)",
+            "Use absolute paths. ~ expands to the home directory.",
+            "For dangerous operations (file deletion, shell commands), confirm with the user first.",
         ]
 
         let moduleSkills = moduleManager.combinedSkillPrompt
@@ -325,10 +328,47 @@ class ChatViewModel {
             systemParts.append(moduleSkills)
         }
 
-        let systemPrompt = systemParts.joined(separator: "\n\n")
+        let systemPrompt = systemParts.joined(separator: "\n")
         history.insert(ChatMessage(role: .system, content: systemPrompt), at: 0)
 
         return Array(history)
+    }
+
+    // MARK: - Tool Call Argument Conversion
+
+    /// Convert MLXLMCommon [String: JSONValue] arguments to a plain [String: Any] dictionary.
+    /// ToolCall.Function.arguments is [String: JSONValue]; IntentRouter expects [String: Any].
+    private func convertToolCallArguments(_ arguments: [String: JSONValue]) -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, value) in arguments {
+            result[key] = convertJSONValue(value)
+        }
+        return result
+    }
+
+    /// Recursively convert a single JSONValue to a Swift Any value.
+    /// JSONValue cases: .null, .bool, .int, .double, .string, .array, .object
+    private func convertJSONValue(_ value: JSONValue) -> Any {
+        switch value {
+        case .string(let s):
+            return s
+        case .int(let i):
+            return i
+        case .double(let d):
+            return d
+        case .bool(let b):
+            return b
+        case .null:
+            return NSNull()
+        case .array(let arr):
+            return arr.map { convertJSONValue($0) }
+        case .object(let dict):
+            var result: [String: Any] = [:]
+            for (key, val) in dict {
+                result[key] = convertJSONValue(val)
+            }
+            return result
+        }
     }
 
     // MARK: - Text Cleanup
@@ -353,39 +393,17 @@ class ChatViewModel {
         return result
     }
 
-    /// Remove all <action>...</action> blocks from text for clean display.
-    /// Also removes incomplete action tags (opening <action> without closing).
-    private func removeActionBlock(from text: String) -> String {
-        var result = text
-        // Remove <action>...</action> blocks
-        while let start = result.range(of: "<action>") {
-            if let end = result.range(of: "</action>") {
-                result.removeSubrange(start.lowerBound..<end.upperBound)
-            } else {
-                result.removeSubrange(start.lowerBound..<result.endIndex)
-            }
-        }
-        // Remove <action_result>...</action_result> blocks
-        while let start = result.range(of: "<action_result>") {
-            if let end = result.range(of: "</action_result>") {
-                result.removeSubrange(start.lowerBound..<end.upperBound)
-            } else {
-                result.removeSubrange(start.lowerBound..<result.endIndex)
-            }
-        }
-        return result
-    }
-
-    /// Build a short summary of action arguments for Inspector display
-    private func actionArgumentsSummary(_ action: KleeAction) -> String {
+    /// Build a short summary of tool call arguments for Inspector display
+    private func toolCallArgumentsSummary(name: String, arguments: [String: Any]) -> String {
         var parts: [String] = []
-        if let path = action.path { parts.append("path: \(path)") }
-        if let url = action.url { parts.append("url: \(url)") }
-        if let command = action.command {
+        if let path = arguments["path"] as? String { parts.append("path: \(path)") }
+        if let url = arguments["url"] as? String { parts.append("url: \(url)") }
+        if let query = arguments["query"] as? String { parts.append("query: \(query)") }
+        if let command = arguments["command"] as? String {
             let short = command.count > 60 ? String(command.prefix(60)) + "..." : command
             parts.append("command: \(short)")
         }
-        if action.content != nil { parts.append("content: (provided)") }
+        if arguments["content"] != nil { parts.append("content: (provided)") }
         return parts.joined(separator: ", ")
     }
 

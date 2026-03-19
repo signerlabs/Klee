@@ -43,6 +43,17 @@ class ModuleManager {
         save()
     }
 
+    func setApiKey(id: String, key: String) {
+        guard let index = modules.firstIndex(where: { $0.id == id }) else { return }
+        modules[index].apiKey = key.isEmpty ? nil : key
+        save()
+    }
+
+    /// Get API key for a module (used by IntentRouter)
+    func apiKey(for moduleId: String) -> String? {
+        modules.first(where: { $0.id == moduleId })?.apiKey
+    }
+
     /// Modules whose skills should be injected into the system prompt
     var activeModules: [KleeModule] {
         modules.filter { $0.shouldInjectSkill }
@@ -60,14 +71,25 @@ class ModuleManager {
     /// These are placeholders — actual service implementations come later.
     static let builtInModules: [KleeModule] = [
         KleeModule(
+            id: "web_search",
+            name: "Web Search",
+            icon: "magnifyingglass",
+            authType: .apiKey,
+            skillPrompt: "You can search the web and fetch webpage content using Jina AI.",
+            isEnabled: false,
+            apiKey: nil,
+            isAuthenticated: false
+        ),
+        KleeModule(
             id: "xiaohongshu",
             name: "小红书",
             icon: "note.text",
+            authType: .login,
             skillPrompt: "你可以操作小红书：搜索笔记、阅读内容、查看/发表评论、点赞收藏、发布图文/视频笔记、查看通知。发布前请确认用户意图和内容完整性。搜索时默认返回 10 条结果。",
             isEnabled: false,
+            apiKey: nil,
             isAuthenticated: false
         ),
-        // More modules will be added as they are implemented
     ]
 
     private func injectBuiltInModules() {
