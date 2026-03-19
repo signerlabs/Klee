@@ -248,10 +248,10 @@ class LLMService {
         }
     }
 
-    /// Local cache directory for a model: ~/Library/Caches/models/{org}/{model-name}/
+    /// Local cache directory for a model: ~/.klee/models/{org}/{model-name}/
     private func localCacheURL(for id: String) -> URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        return caches.appendingPathComponent("models/\(id)")
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".klee/models/\(id)")
     }
 
     // MARK: - Streaming Chat

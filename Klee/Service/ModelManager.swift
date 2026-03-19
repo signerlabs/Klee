@@ -3,7 +3,7 @@
 //  Klee
 //
 //  Model manager: recommended model list, RAM-based filtering, download/delete cached models.
-//  Model cache path: ~/Library/Caches/models/{org}/{model-name}/
+//  Model cache path: ~/.klee/models/{org}/{model-name}/
 //
 
 import Foundation
@@ -123,14 +123,14 @@ class ModelManager {
 
     // MARK: - Private Methods
 
-    /// Model cache root directory: ~/Library/Caches/models/
+    /// Model cache root directory: ~/.klee/models/
     private var modelsCacheDir: URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        return caches.appendingPathComponent("models")
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".klee/models")
     }
 
     /// Get the cache directory for a specified model
-    /// "mlx-community/Qwen3-4B-4bit" -> ~/Library/Caches/models/mlx-community/Qwen3-4B-4bit/
+    /// "mlx-community/Qwen3-4B-4bit" -> ~/.klee/models/mlx-community/Qwen3-4B-4bit/
     private func cacheDirectory(for id: String) -> URL {
         modelsCacheDir.appendingPathComponent(id)
     }

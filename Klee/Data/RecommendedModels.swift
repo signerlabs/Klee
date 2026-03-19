@@ -24,6 +24,13 @@ extension ModelInfo {
             supportsVision: true
         ),
         ModelInfo(
+            id: "mlx-community/Qwen3-8B-4bit",
+            name: "Qwen 3 8B",
+            size: "~4.3 GB",
+            minRAM: 16,
+            expectedBytes: 4_300_000_000
+        ),
+        ModelInfo(
             id: "mlx-community/gemma-3-12b-it-qat-4bit",
             name: "Gemma 3 12B",
             size: "~8 GB",

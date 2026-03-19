@@ -251,10 +251,10 @@ class DownloadManager {
 
     // MARK: - Helpers
 
-    /// Model cache directory: ~/Library/Caches/models/{org}/{model-name}/
+    /// Model cache directory: ~/.klee/models/{org}/{model-name}/
     private func cacheDirectory(for id: String) -> URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        return caches.appendingPathComponent("models/\(id)")
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".klee/models/\(id)")
     }
 
     private func cancelCurrentTask() {
