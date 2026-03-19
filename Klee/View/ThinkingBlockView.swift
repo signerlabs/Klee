@@ -12,30 +12,43 @@ import SwiftUI
 struct ThinkingBlockView: View {
     let content: String
     let isStreaming: Bool
+    @State private var isExpanded: Bool = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Header
-            HStack(spacing: 6) {
-                if isStreaming {
-                    ThinkingIndicator()
+        VStack(alignment: .leading, spacing: 0) {
+            // Header — click to toggle
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+                    if isStreaming {
+                        ThinkingIndicator()
+                    }
+                    Text("Thinking")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
-                Text("Thinking")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                Spacer()
             }
+            .buttonStyle(.plain)
 
-            // Scrollable content with max height
-            ScrollView {
-                Text(content)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // Content — scrollable with max height, no lineLimit truncation
+            if isExpanded {
+                ScrollView {
+                    Text(content)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 200)
+                .padding(.top, 6)
             }
-            .frame(maxHeight: 200)
         }
         .padding(10)
         .background(.ultraThinMaterial)
@@ -45,24 +58,4 @@ struct ThinkingBlockView: View {
                 .strokeBorder(.quaternary, lineWidth: 0.5)
         )
     }
-}
-
-// MARK: - Preview
-
-#Preview("Streaming") {
-    ThinkingBlockView(
-        content: "Let me analyze this step by step...\n1. First, consider the input\n2. Then process the logic",
-        isStreaming: true
-    )
-    .frame(width: 400)
-    .padding()
-}
-
-#Preview("Collapsed") {
-    ThinkingBlockView(
-        content: "This is the completed thinking content that can be expanded.",
-        isStreaming: false
-    )
-    .frame(width: 400)
-    .padding()
 }

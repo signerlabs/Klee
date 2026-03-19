@@ -117,38 +117,119 @@ class ChatViewModel {
         thinkBlockFinalized = false
 
         Task {
-            // Build message history with system prompt
-            let history = buildHistory()
+            // Build initial message history with system prompt
+            var history = buildHistory()
 
-            // Convert image URLs to UserInput.Image for VLM inference
-            let vlmImages: [UserInput.Image] = imageURLs.map { .url($0) }
+            // Images are only attached on the first round (user's original message)
+            var roundImages: [UserInput.Image] = imageURLs.map { .url($0) }
 
-            // Single-round LLM streaming inference (no tool calling)
-            let stream = llmService.chat(messages: history, images: vlmImages)
+            // Accumulated display text for the assistant bubble (across all rounds)
+            var displayText = ""
 
-            var accumulated = ""
+            // Action loop: stream LLM output, detect <action> tags, execute, re-run.
+            // Capped at maxActionRounds to prevent infinite loops.
+            let maxActionRounds = 5
+            var actionRound = 0
 
-            for await chunk in stream {
-                if case .text(let token) = chunk {
-                    accumulated += token
-                    // Update Inspector with real-time thinking
-                    updateInspectorStreaming(accumulated: accumulated)
-                    // Skip UI updates during thinking phase — content hasn't changed and
-                    // updating every thinking token causes unnecessary SwiftUI re-renders.
-                    if streamingThinkingIndex == nil {
-                        let cleanedSoFar = removeThinkBlock(from: accumulated)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        chatStore.updateMessage(id: assistantID, in: convId, content: cleanedSoFar)
+            while actionRound < maxActionRounds {
+                // Reset per-round thinking state
+                streamingThinkingIndex = nil
+                thinkBlockFinalized = false
+
+                print("[ChatVM] ===== Round \(actionRound) START (history: \(history.count)) =====")
+                let stream = llmService.chat(messages: history, images: roundImages)
+                var accumulated = ""
+
+                for await chunk in stream {
+                    if case .text(let token) = chunk {
+                        accumulated += token
+                        // Update Inspector with real-time thinking
+                        updateInspectorStreaming(accumulated: accumulated)
+                        // Only update thinking block during streaming.
+                        // Message content is set once at the end of the loop.
                     }
                 }
+
+                // Finalize any open thinking block for this round
+                streamingThinkingIndex = nil
+
+                // Clean up the accumulated text (remove think blocks)
+                let cleanedAccumulated = removeThinkBlock(from: accumulated)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                print("[ChatVM] Round \(actionRound) LLM done | length: \(accumulated.count) | hasAction: \(cleanedAccumulated.contains("<action>"))")
+
+                // Check for <action> tag in the cleaned output
+                if let parsed = IntentRouter.parseAction(from: cleanedAccumulated) {
+                    actionRound += 1
+                    print("[ChatVM] ACTION DETECTED: \(parsed.action.type) | round \(actionRound)")
+
+                    // Append any text before the action tag to the display
+                    let preText = parsed.preText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !preText.isEmpty {
+                        displayText += preText + "\n\n"
+                    }
+
+                    // Record the action in Inspector for visibility
+                    inspectorItems.append(InspectorItem(
+                        timestamp: Date(),
+                        content: .toolCall(
+                            name: parsed.action.type,
+                            arguments: actionArgumentsSummary(parsed.action),
+                            status: .calling
+                        )
+                    ))
+                    let actionItemIndex = inspectorItems.count - 1
+
+                    // Execute the action
+                    let result = await IntentRouter.execute(parsed.action)
+                    print("[ChatVM] Action \(parsed.action.type) \(result.success ? "OK" : "FAIL"): \(result.output.prefix(120))")
+
+                    // Update Inspector with result
+                    if actionItemIndex < inspectorItems.count {
+                        if result.success {
+                            inspectorItems[actionItemIndex].content = .toolCall(
+                                name: parsed.action.type,
+                                arguments: actionArgumentsSummary(parsed.action),
+                                status: .completed(result: String(result.output.prefix(200)))
+                            )
+                        } else {
+                            inspectorItems[actionItemIndex].content = .toolCall(
+                                name: parsed.action.type,
+                                arguments: actionArgumentsSummary(parsed.action),
+                                status: .failed(error: result.output)
+                            )
+                        }
+                    }
+                    // Inject action result into history for the next LLM round.
+                    // The full accumulated output (including the action tag) is the assistant's response,
+                    // and the action result is injected as a user message.
+                    history.append(ChatMessage(role: .assistant, content: accumulated))
+                    let actionResultMsg = "<action_result>\n\(result.output)\n</action_result>"
+                    history.append(ChatMessage(role: .user, content: actionResultMsg))
+                    print("[ChatVM] Injected action_result into history | history count now: \(history.count)")
+
+                    // No images on continuation rounds
+                    roundImages = []
+
+                    // If we've hit the action round limit, stop looping.
+                    // Append a notice so the user knows why the AI stopped.
+                    if actionRound >= maxActionRounds {
+                        displayText += "\n\n*(Reached maximum action rounds — stopping.)*"
+                        break
+                    }
+                    continue
+                }
+
+                // No action found — this is the final answer.
+                let finalRoundText = removeActionBlock(from: cleanedAccumulated)
+                displayText += finalRoundText
+                print("[ChatVM] ===== FINAL ANSWER | round \(actionRound) =====")
+                break
             }
 
-            // Finalize any open thinking block
-            streamingThinkingIndex = nil
-
-            // Strip <think> blocks for clean display
-            let finalContent = removeThinkBlock(from: accumulated)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Update the assistant message with the final accumulated display text
+            let finalContent = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
             chatStore.updateMessage(id: assistantID, in: convId, content: finalContent)
 
             // Remove placeholder if empty (generation failed)
@@ -197,17 +278,46 @@ class ChatViewModel {
 
     // MARK: - Build History
 
-    /// Build the chat history array for the LLM, prepending system prompt with module skills.
+    /// Build the chat history array for the LLM, prepending system prompt with action instructions
+    /// and module skills.
     private func buildHistory() -> [ChatMessage] {
         var history = messages
             .filter { $0.role != .system }
             .dropLast() // Exclude the empty assistant placeholder
             .map { $0 }
 
-        // Build system prompt: built-in capabilities + active module skills
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+
+        // Build system prompt: action instructions + module skills
         var systemParts: [String] = [
-            "You are Klee, a local AI assistant running on macOS.",
-            "You can read and write local files (Desktop, Documents, Downloads, etc.) and fetch web page content."
+            """
+            You are Klee, a local AI assistant running on macOS.
+
+            You can perform actions on the user's computer by outputting action tags. When the user asks you to do something (create a file, read a file, fetch a webpage, etc.), output the action in the following format:
+
+            <action>
+            {"type": "action_type", ...parameters}
+            </action>
+
+            Available actions:
+            - file_write: Create or overwrite a file. Parameters: path (string), content (string)
+            - file_read: Read a file's contents. Parameters: path (string)
+            - file_list: List files in a directory. Parameters: path (string)
+            - file_delete: Delete a file. Parameters: path (string)
+            - web_fetch: Fetch a webpage's text content. Parameters: url (string)
+            - shell_exec: Execute a shell command. Parameters: command (string)
+
+            Path notes:
+            - Use absolute paths. ~ expands to the user's home directory.
+            - The user's home directory is: \(homeDir)
+
+            After outputting an action, wait for the result. The system will execute it and provide the output inside <action_result> tags. Then continue your response to the user based on the result.
+
+            Important rules:
+            - Only output ONE action at a time. Wait for the result before outputting the next action.
+            - Do not fabricate action results. Wait for the actual execution result.
+            - For simple questions that don't require system interaction, just respond normally without any action tags.
+            """
         ]
 
         let moduleSkills = moduleManager.combinedSkillPrompt
@@ -215,7 +325,7 @@ class ChatViewModel {
             systemParts.append(moduleSkills)
         }
 
-        let systemPrompt = systemParts.joined(separator: "\n")
+        let systemPrompt = systemParts.joined(separator: "\n\n")
         history.insert(ChatMessage(role: .system, content: systemPrompt), at: 0)
 
         return Array(history)
@@ -241,6 +351,42 @@ class ChatViewModel {
             result.removeSubrange(result.startIndex..<end.upperBound)
         }
         return result
+    }
+
+    /// Remove all <action>...</action> blocks from text for clean display.
+    /// Also removes incomplete action tags (opening <action> without closing).
+    private func removeActionBlock(from text: String) -> String {
+        var result = text
+        // Remove <action>...</action> blocks
+        while let start = result.range(of: "<action>") {
+            if let end = result.range(of: "</action>") {
+                result.removeSubrange(start.lowerBound..<end.upperBound)
+            } else {
+                result.removeSubrange(start.lowerBound..<result.endIndex)
+            }
+        }
+        // Remove <action_result>...</action_result> blocks
+        while let start = result.range(of: "<action_result>") {
+            if let end = result.range(of: "</action_result>") {
+                result.removeSubrange(start.lowerBound..<end.upperBound)
+            } else {
+                result.removeSubrange(start.lowerBound..<result.endIndex)
+            }
+        }
+        return result
+    }
+
+    /// Build a short summary of action arguments for Inspector display
+    private func actionArgumentsSummary(_ action: KleeAction) -> String {
+        var parts: [String] = []
+        if let path = action.path { parts.append("path: \(path)") }
+        if let url = action.url { parts.append("url: \(url)") }
+        if let command = action.command {
+            let short = command.count > 60 ? String(command.prefix(60)) + "..." : command
+            parts.append("command: \(short)")
+        }
+        if action.content != nil { parts.append("content: (provided)") }
+        return parts.joined(separator: ", ")
     }
 
     // MARK: - Stop Generation

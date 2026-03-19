@@ -18,7 +18,6 @@ struct ChatView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var viewModel: ChatViewModel?
     @State private var showConfig = false
-
     /// Throttle state for scroll-to-bottom
     @State private var lastScrollTime: Date = .distantPast
     @State private var trailingScrollTask: Task<Void, Never>?
@@ -117,34 +116,32 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 List {
                     ForEach(viewModel.messages) { message in
+                        // Insert thinking block BEFORE the last assistant message
+                        if message.role == .assistant,
+                           message.id == viewModel.messages.last?.id {
+                            // Thinking block above the assistant reply
+                            if let thinking = viewModel.currentThinkingContent {
+                                ThinkingBlockView(content: thinking, isStreaming: viewModel.isStreaming)
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                    .id("chat-thinking")
+                            } else if viewModel.isStreaming && message.content.isEmpty {
+                                ThinkingBubbleView()
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                    .id("chat-thinking")
+                            }
+                        }
+
+                        // The message itself (skip empty assistant placeholder during streaming)
                         if !(message.role == .assistant && message.content.isEmpty && viewModel.isStreaming) {
                             MessageBubbleView(message: message)
                                 .id(message.id)
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                        }
-                    }
-
-                    // Thinking block: show inline during streaming
-                    if viewModel.isStreaming,
-                       let last = viewModel.messages.last,
-                       last.role == .assistant,
-                       last.content.isEmpty {
-                        if let thinking = viewModel.currentThinkingContent {
-                            // Thinking content available: show collapsible block
-                            ThinkingBlockView(content: thinking, isStreaming: true)
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                                .id("chat-thinking")
-                        } else {
-                            // No thinking content yet: show original bouncing dots
-                            ThinkingBubbleView()
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                                .id("chat-thinking")
                         }
                     }
 

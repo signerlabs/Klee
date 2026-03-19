@@ -2,13 +2,13 @@
 //  InspectorItem.swift
 //  Klee
 //
-//  Data model for conversation activity entries (thinking blocks).
+//  Data model for conversation activity entries (thinking blocks and action tool calls).
 //  Persisted alongside conversations in JSON.
 //
 
 import Foundation
 
-/// Represents a single activity entry in a conversation (currently thinking blocks only)
+/// Represents a single activity entry in a conversation (thinking blocks and tool call records)
 struct InspectorItem: Identifiable, Codable, Equatable {
     let id: UUID
     let timestamp: Date
@@ -16,7 +16,7 @@ struct InspectorItem: Identifiable, Codable, Equatable {
 
     enum Content: Codable, Equatable {
         case thinking(String)
-        // toolCall case reserved for future module implementations
+        /// Records an IntentRouter action execution (file/web/shell operations)
         case toolCall(name: String, arguments: String, status: ToolCallStatus)
     }
 
