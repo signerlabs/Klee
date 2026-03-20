@@ -13,4 +13,6 @@ Resources/
 
 # Local dev notes (not for public repo)
 CLAUDE.md
-# klee-architecture-plan.md
+klee-architecture-plan.md
+mlx-swift-lm-fork-plan.md
+mlx-swift-performance-research.md
