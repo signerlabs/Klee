@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/signerlabs-klee-badge.png)](https://mseep.ai/app/signerlabs-klee)
+
 # Klee
 
 A native macOS AI agent that runs entirely on your Mac. No cloud, no account, no subscription.
