@@ -15,7 +15,7 @@ Klee uses [MLX](https://github.com/ml-explore/mlx-swift) to run large language m
 - **Streaming responses** -- tokens appear as they're generated
 - **Inline thinking** -- see the model's reasoning process in a collapsible card
 - **Platform modules** -- extend the AI with native Swift integrations (coming soon)
-- **Lightweight** -- ~75MB native SwiftUI app, no Electron, no Docker, no background services
+- **Lightweight** -- ~60 MB native SwiftUI app, no Electron, no Docker, no background services
 
 ## System Requirements
 
@@ -38,8 +38,8 @@ More RAM unlocks larger, more capable models:
 
 Klee is distributed directly as a signed macOS app (Developer ID), not through the App Store.
 
-1. Download the latest `.dmg` from [Releases](https://github.com/signerlabs/Klee/releases)
-2. Drag **Klee** into your Applications folder
+1. Download the latest `.zip` (e.g. `Klee-v1.0.0.zip`, ~22 MB) from [Releases](https://github.com/signerlabs/Klee/releases)
+2. Unzip it and move **Klee.app** into your Applications folder
 3. Open Klee -- if macOS shows a Gatekeeper warning, go to **System Settings > Privacy & Security** and click "Open Anyway"
 
 ## Usage
