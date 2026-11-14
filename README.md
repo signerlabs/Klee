@@ -4,6 +4,8 @@ A native macOS AI agent that runs entirely on your Mac. No cloud, no account, no
 
 Klee uses [MLX](https://github.com/ml-explore/mlx-swift) to run large language models directly on Apple Silicon, so your conversations never leave your device.
 
+> **Want frontier cloud models and a full agent harness?** The new [Klee for Mac](https://kleedesktop.com) runs Claude Opus 5.5, Fable 5.2 and Sonnet 5.5 with planning, subtasks, skills and MCP, and can build websites and apps for you. It needs a Klee account and is paid. This local version stays free, open source and actively maintained.
+
 ## Features
 
 - **100% local inference** -- your data stays on your Mac
