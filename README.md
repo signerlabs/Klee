@@ -1,10 +1,16 @@
 # Klee
 
+**English** · [简体中文](README.zh-CN.md)
+
+<a href="https://kleedesktop.com"><img src="Docs/images/klee-for-mac-en.png" alt="The new Klee for Mac: say it, and Klee builds websites and apps and edits video on your Mac. Get it at kleedesktop.com" width="100%"></a>
+
+> **Want frontier cloud models and a full agent harness?** The new [Klee for Mac](https://kleedesktop.com) runs Claude Opus 5.5, Fable 5.2 and Sonnet 5.5 with planning, subtasks, skills and MCP, and can build websites and apps for you. It needs a Klee account and is paid. **[Download it at kleedesktop.com →](https://kleedesktop.com)**
+>
+> This repository is the local version. It stays free, open source and actively maintained.
+
 A native macOS AI agent that runs entirely on your Mac. No cloud, no account, no subscription.
 
 Klee uses [MLX](https://github.com/ml-explore/mlx-swift) to run large language models directly on Apple Silicon, so your conversations never leave your device.
-
-> **Want frontier cloud models and a full agent harness?** The new [Klee for Mac](https://kleedesktop.com) runs Claude Opus 5.5, Fable 5.2 and Sonnet 5.5 with planning, subtasks, skills and MCP, and can build websites and apps for you. It needs a Klee account and is paid. This local version stays free, open source and actively maintained.
 
 ## Features
 
