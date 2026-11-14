@@ -31,16 +31,16 @@ More RAM unlocks larger, more capable models:
 
 | RAM | Recommended Models |
 |---|---|
-| 16 GB | Qwen 3.5 9B, Qwen 3 8B, Gemma 3 12B, DeepSeek R1 8B |
-| 32 GB | Qwen 3.5 27B, Qwen 3.5 35B (MoE) |
-| 64 GB | Gemma 3 27B, DeepSeek R1 32B |
+| 16 GB | Qwen 3.5 9B, Gemma 4 12B, Qwen 3 8B, Gemma 3 12B, DeepSeek R1 8B |
+| 32 GB | Qwen 3.6 27B, Qwen 3.6 35B (MoE), Gemma 4 26B (MoE), Qwen 3.5 27B, Qwen 3.5 35B (MoE) |
+| 64 GB | Gemma 4 31B, Gemma 3 27B, DeepSeek R1 32B |
 | 96 GB+ | Qwen 3.5 122B (MoE) |
 
 ## Install
 
 Klee is distributed directly as a signed macOS app (Developer ID), not through the App Store.
 
-1. Download the latest `.zip` (e.g. `Klee-v1.0.0.zip`, ~22 MB) from [Releases](https://github.com/signerlabs/Klee/releases)
+1. Download the latest `.zip` (e.g. `Klee-v1.1.0.zip`) from [Releases](https://github.com/signerlabs/Klee/releases)
 2. Unzip it and move **Klee.app** into your Applications folder
 3. Open Klee -- if macOS shows a Gatekeeper warning, go to **System Settings > Privacy & Security** and click "Open Anyway"
 
@@ -70,11 +70,16 @@ All models are 4-bit quantized variants from the [mlx-community](https://hugging
 | Model | Size | Min RAM | Vision | HuggingFace ID |
 |---|---|---|---|---|
 | Qwen 3.5 9B | ~6 GB | 16 GB | Yes | `mlx-community/Qwen3.5-9B-4bit` |
+| Gemma 4 12B | ~6.7 GB | 16 GB | Yes | `mlx-community/gemma-4-12B-it-4bit` |
 | Qwen 3 8B | ~4.3 GB | 16 GB | | `mlx-community/Qwen3-8B-4bit` |
 | Gemma 3 12B | ~8 GB | 16 GB | | `mlx-community/gemma-3-12b-it-qat-4bit` |
 | DeepSeek R1 8B | ~4.6 GB | 16 GB | | `mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit` |
+| Qwen 3.6 27B | ~16 GB | 32 GB | Yes | `mlx-community/Qwen3.6-27B-4bit` |
+| Qwen 3.6 35B (MoE) | ~20 GB | 32 GB | Yes | `mlx-community/Qwen3.6-35B-A3B-4bit` |
+| Gemma 4 26B (MoE) | ~15 GB | 32 GB | Yes | `mlx-community/gemma-4-26b-a4b-it-4bit` |
 | Qwen 3.5 27B | ~16 GB | 32 GB | Yes | `mlx-community/Qwen3.5-27B-4bit` |
 | Qwen 3.5 35B (MoE) | ~20 GB | 32 GB | Yes | `mlx-community/Qwen3.5-35B-A3B-4bit` |
+| Gemma 4 31B | ~18 GB | 64 GB | Yes | `mlx-community/gemma-4-31b-it-4bit` |
 | Gemma 3 27B | ~17 GB | 64 GB | | `mlx-community/gemma-3-27b-it-qat-4bit` |
 | DeepSeek R1 32B | ~18 GB | 64 GB | | `mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit` |
 | Qwen 3.5 122B (MoE) | ~70 GB | 96 GB | Yes | `mlx-community/Qwen3.5-122B-A10B-4bit` |
@@ -103,7 +108,7 @@ cd Klee
 open Klee.xcodeproj
 ```
 
-Select the **Klee** scheme, then build and run (Cmd+R). SPM dependency (mlx-swift-lm) will resolve automatically on first build.
+Select the **Klee** scheme, then build and run (Cmd+R). SPM dependencies (mlx-swift-lm 3.32, swift-transformers 1.3) will resolve automatically on first build.
 
 ## Acknowledgements
 

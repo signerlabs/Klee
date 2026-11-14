@@ -85,17 +85,11 @@ class DownloadManager {
                 }
 
                 // Phase 2: Load model from local directory
-                let configuration = ModelConfiguration(directory: localDir)
+                // (the 3.x directory loader reports no progress; the bar stays at 95% until done)
                 let container = try await loadModelContainer(
-                    configuration: configuration
-                ) { [weak self] loadProgress in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.status == .downloading else { return }
-                        // During loading phase, show progress as 95-100%
-                        let loadFraction = loadProgress.fractionCompleted
-                        self.progress.fractionCompleted = 0.95 + loadFraction * 0.05
-                    }
-                }
+                    from: localDir,
+                    using: TransformersTokenizerLoader()
+                )
 
                 // Check if cancelled
                 if Task.isCancelled {

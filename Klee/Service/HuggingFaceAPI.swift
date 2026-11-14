@@ -22,7 +22,8 @@ nonisolated struct HuggingFaceAPI {
         ".txt",
         ".py",       // tokenizer scripts
         ".model",    // sentencepiece models
-        ".tiktoken"  // tiktoken vocab
+        ".tiktoken", // tiktoken vocab
+        ".jinja"     // chat_template.jinja (newer repos keep the chat template here)
     ]
 
     /// Files to always include by exact name (regardless of extension)

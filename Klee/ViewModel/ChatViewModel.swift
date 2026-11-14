@@ -131,7 +131,10 @@ class ChatViewModel {
 
         Task {
             // Build initial message history with system prompt
-            var history = buildHistory()
+            let history = buildHistory()
+
+            // Tool rounds completed so far in this reply (sent after `history`)
+            var toolTurns: [LLMService.ToolTurn] = []
 
             // Images are only attached on the first round (user's original message)
             var roundImages: [UserInput.Image] = imageURLs.map { .url($0) }
@@ -149,15 +152,15 @@ class ChatViewModel {
                 streamingThinkingIndex = nil
                 thinkBlockFinalized = false
 
-                print("[ChatVM] ===== Round \(toolRound) START (history: \(history.count)) =====")
-                let stream = llmService.chat(messages: history, tools: toolSpecs, images: roundImages)
+                print("[ChatVM] ===== Round \(toolRound) START (history: \(history.count), tool turns: \(toolTurns.count)) =====")
+                let stream = llmService.chat(messages: history, toolTurns: toolTurns, tools: toolSpecs, images: roundImages)
                 var accumulated = ""
                 var detectedToolCall: ToolCall?
 
                 for await chunk in stream {
                     switch chunk {
                     case .text(let token):
-                        accumulated += token
+                        accumulated = normalizeThinkMarkers(accumulated + token)
                         // Update Inspector with real-time thinking
                         updateInspectorStreaming(accumulated: accumulated)
                     case .toolCall(let tc):
@@ -227,13 +230,12 @@ class ChatViewModel {
                         }
                     }
 
-                    // Inject tool result into history for the next LLM round.
-                    // The full accumulated output is the assistant's response,
-                    // and the tool result is injected as a user message.
+                    // Record the tool round for the next LLM round; LLMService sends it as the
+                    // model's tool call plus a tool message carrying the result.
                     let cleanedAssistant = removeThinkBlock(from: accumulated)
-                    history.append(ChatMessage(role: .assistant, content: cleanedAssistant))
-                    history.append(ChatMessage(role: .user, content: "<tool_response>\n\(result.output)\n</tool_response>"))
-                    print("[ChatVM] Injected tool_response into history | history count now: \(history.count)")
+                    toolTurns.append(LLMService.ToolTurn(
+                        call: toolCall, output: result.output, assistantText: cleanedAssistant))
+                    print("[ChatVM] Recorded tool turn | tool turns now: \(toolTurns.count)")
 
                     // No images on continuation rounds
                     roundImages = []
@@ -372,6 +374,15 @@ class ChatViewModel {
     }
 
     // MARK: - Text Cleanup
+
+    /// Gemma 4 marks its reasoning as `<|channel>thought ... <channel|>` instead of
+    /// `<think> ... </think>`; rewrite it so the think-block handling below applies.
+    private func normalizeThinkMarkers(_ text: String) -> String {
+        guard text.contains("channel") else { return text }
+        return text
+            .replacingOccurrences(of: "<|channel>thought", with: "<think>")
+            .replacingOccurrences(of: "<channel|>", with: "</think>")
+    }
 
     /// Remove all <think>...</think> blocks from text for clean display
     private func removeThinkBlock(from text: String) -> String {

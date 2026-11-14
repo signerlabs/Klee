@@ -10,6 +10,7 @@
 		9B252D1A2F5F000000000001 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9B252D1B2F5F000000000001 /* MLXLLM */; };
 		9B252D1C2F5F000000000002 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9B252D1D2F5F000000000002 /* MLXLMCommon */; };
 		9BB1FE542F6535A800616248 /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9BB1FE532F6535A800616248 /* MLXVLM */; };
+		9B252D212F5F000000000006 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 9B252D202F5F000000000005 /* Tokenizers */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 				9B252D1A2F5F000000000001 /* MLXLLM in Frameworks */,
 				9BB1FE542F6535A800616248 /* MLXVLM in Frameworks */,
 				9B252D1C2F5F000000000002 /* MLXLMCommon in Frameworks */,
+				9B252D212F5F000000000006 /* Tokenizers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -86,6 +88,7 @@
 				9B252D1B2F5F000000000001 /* MLXLLM */,
 				9B252D1D2F5F000000000002 /* MLXLMCommon */,
 				9BB1FE532F6535A800616248 /* MLXVLM */,
+				9B252D202F5F000000000005 /* Tokenizers */,
 			);
 			productName = Klee;
 			productReference = 9B252CE42F5EE71200DDD7B5 /* Klee.app */;
@@ -117,6 +120,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				9B252D1E2F5F000000000003 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				9B252D1F2F5F000000000004 /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9B252CE52F5EE71200DDD7B5 /* Products */;
@@ -298,7 +302,7 @@
 				CODE_SIGN_ENTITLEMENTS = Klee/Klee.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 5GS4D3667R;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -312,7 +316,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.signerlabs.Klee;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -333,7 +337,7 @@
 				CODE_SIGN_ENTITLEMENTS = Klee/Klee.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 5GS4D3667R;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -347,7 +351,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.signerlabs.Klee;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -388,8 +392,16 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = upToNextMinorVersion;
+				minimumVersion = 3.32.3;
+			};
+		};
+		9B252D1F2F5F000000000004 /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-transformers";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 1.3.5;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -409,6 +421,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 9B252D1E2F5F000000000003 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
 			productName = MLXVLM;
+		};
+		9B252D202F5F000000000005 /* Tokenizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9B252D1F2F5F000000000004 /* XCRemoteSwiftPackageReference "swift-transformers" */;
+			productName = Tokenizers;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

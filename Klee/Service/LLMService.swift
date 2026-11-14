@@ -202,29 +202,19 @@ class LLMService {
         loadingStatus = "Loading model..."
 
         do {
-            // If the model is already cached locally, load directly from disk to avoid
-            // unnecessary network requests (Hub normally fetches remote hashes even for cached models)
+            // Models are downloaded by DownloadManager into ~/.klee/models. mlx-swift-lm 3.x
+            // has no built-in downloader, so a model that is not on disk cannot be loaded here.
             let localURL = localCacheURL(for: id)
-            let isCachedLocally = FileManager.default.fileExists(atPath: localURL.path)
-            let configuration = isCachedLocally
-                ? ModelConfiguration(directory: localURL)
-                : ModelConfiguration(id: id)
-
-            // Use the unified loadModelContainer() which tries MLXVLM first, then MLXLLM.
-            // This ensures VLM models (e.g. Qwen 3.5) are loaded with vision support.
-            let container = try await loadModelContainer(
-                configuration: configuration
-            ) { [weak self] progress in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.loadProgress = progress.fractionCompleted
-                    let completed = progress.completedUnitCount
-                    let total = progress.totalUnitCount
-                    if total > 0 {
-                        self.loadingStatus = "Loading \(completed)/\(total) files..."
-                    }
-                }
+            guard FileManager.default.fileExists(atPath: localURL.path) else {
+                throw KleeError.modelNotDownloaded(id)
             }
+
+            // The unified loadModelContainer() tries MLXVLM first, then MLXLLM.
+            // This ensures VLM models (e.g. Qwen 3.5, Gemma 4) are loaded with vision support.
+            let container = try await loadModelContainer(
+                from: localURL,
+                using: TransformersTokenizerLoader()
+            )
 
             modelContainer = container
             currentModelId = id
@@ -256,14 +246,24 @@ class LLMService {
 
     // MARK: - Streaming Chat
 
+    /// One completed tool round within the current reply: the call the model made and what
+    /// the tool returned.
+    struct ToolTurn {
+        let call: ToolCall
+        let output: String
+        /// The model's text before the call, only used by the legacy fallback below
+        let assistantText: String
+    }
+
     /// Send chat messages with optional tool definitions and return a streaming output.
     /// Each element is either a text chunk or a native tool call detected by the model.
     /// - Parameters:
     ///   - messages: Complete conversation history
+    ///   - toolTurns: Tool rounds already completed in this reply, appended after `messages`
     ///   - tools: Optional tool specifications for native tool calling
     ///   - images: Optional images to attach to the latest user message (for VLM inference)
     /// - Returns: Async stream of GenerationChunk
-    func chat(messages: [ChatMessage], tools: [[String: any Sendable]]? = nil, images: [UserInput.Image] = []) -> AsyncStream<GenerationChunk> {
+    func chat(messages: [ChatMessage], toolTurns: [ToolTurn] = [], tools: [[String: any Sendable]]? = nil, images: [UserInput.Image] = []) -> AsyncStream<GenerationChunk> {
         AsyncStream { continuation in
             generationTask = Task { [weak self] in
                 guard let self, let container = self.modelContainer else {
@@ -292,10 +292,34 @@ class LLMService {
                         }
                     }
 
-                    let userInput = UserInput(chat: chatMessages, tools: tools)
+                    // Tool rounds go in as an assistant message carrying the tool call followed
+                    // by a tool message with the result, which each model's chat template renders
+                    // in its own format (Gemma 4 needs this; it re-calls the tool otherwise).
+                    let toolMessages: [Chat.Message] = toolTurns.flatMap { turn in
+                        [
+                            Chat.Message.assistant("", toolCalls: [turn.call]),
+                            Chat.Message.tool(turn.output, id: turn.call.id, name: turn.call.function.name),
+                        ]
+                    }
 
                     // Prepare input (UserInput -> LMInput)
-                    let lmInput = try await container.prepare(input: userInput)
+                    let lmInput: LMInput
+                    do {
+                        lmInput = try await container.prepare(
+                            input: UserInput(chat: chatMessages + toolMessages, tools: tools))
+                    } catch where !toolTurns.isEmpty {
+                        // Templates without a tool role (e.g. Gemma 3) reject the messages above;
+                        // fall back to the previous form: the result as a user message.
+                        print("[LLMService] Tool messages rejected by the chat template, using fallback: \(error.localizedDescription)")
+                        let legacyMessages: [Chat.Message] = toolTurns.flatMap { turn in
+                            [
+                                Chat.Message.assistant(turn.assistantText),
+                                Chat.Message.user("<tool_response>\n\(turn.output)\n</tool_response>"),
+                            ]
+                        }
+                        lmInput = try await container.prepare(
+                            input: UserInput(chat: chatMessages + legacyMessages, tools: tools))
+                    }
 
                     // Optimization: use tuned GenerateParameters instead of hardcoded values.
                     // See makeGenerateParameters() for details on each parameter choice.

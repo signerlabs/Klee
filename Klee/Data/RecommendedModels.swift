@@ -24,6 +24,14 @@ extension ModelInfo {
             supportsVision: true
         ),
         ModelInfo(
+            id: "mlx-community/gemma-4-12B-it-4bit",
+            name: "Gemma 4 12B",
+            size: "~6.7 GB",
+            minRAM: 16,
+            expectedBytes: 6_740_000_000,
+            supportsVision: true
+        ),
+        ModelInfo(
             id: "mlx-community/Qwen3-8B-4bit",
             name: "Qwen 3 8B",
             size: "~4.3 GB",
@@ -47,6 +55,30 @@ extension ModelInfo {
 
         // 32GB devices
         ModelInfo(
+            id: "mlx-community/Qwen3.6-27B-4bit",
+            name: "Qwen 3.6 27B",
+            size: "~16 GB",
+            minRAM: 32,
+            expectedBytes: 16_050_000_000,
+            supportsVision: true
+        ),
+        ModelInfo(
+            id: "mlx-community/Qwen3.6-35B-A3B-4bit",
+            name: "Qwen 3.6 35B MoE",
+            size: "~20 GB",
+            minRAM: 32,
+            expectedBytes: 20_400_000_000,
+            supportsVision: true
+        ),
+        ModelInfo(
+            id: "mlx-community/gemma-4-26b-a4b-it-4bit",
+            name: "Gemma 4 26B MoE",
+            size: "~15 GB",
+            minRAM: 32,
+            expectedBytes: 15_340_000_000,
+            supportsVision: true
+        ),
+        ModelInfo(
             id: "mlx-community/Qwen3.5-27B-4bit",
             name: "Qwen 3.5 27B",
             size: "~16 GB",
@@ -64,6 +96,14 @@ extension ModelInfo {
         ),
 
         // 64GB+ devices
+        ModelInfo(
+            id: "mlx-community/gemma-4-31b-it-4bit",
+            name: "Gemma 4 31B",
+            size: "~18 GB",
+            minRAM: 64,
+            expectedBytes: 18_410_000_000,
+            supportsVision: true
+        ),
         ModelInfo(
             id: "mlx-community/gemma-3-27b-it-qat-4bit",
             name: "Gemma 3 27B",

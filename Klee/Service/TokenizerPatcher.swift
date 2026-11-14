@@ -53,6 +53,12 @@ struct TokenizerPatcher {
             return
         }
 
+        // Newer repos ship the template as chat_template.jinja, which the tokenizer
+        // loader reads directly — no patch needed
+        if fm.fileExists(atPath: localURL.appendingPathComponent("chat_template.jinja").path) {
+            return
+        }
+
         print("[TokenizerPatcher] chat_template missing in tokenizer_config.json, attempting to patch...")
 
         // Attempt 1: Fetch from the original HuggingFace repo
